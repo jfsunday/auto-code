@@ -7,6 +7,15 @@
 LAST_PR_URL=""
 LAST_ERROR=""
 
+# Helper: record whatever tokens the last claude_run produced.
+# Used after every successful claude_run inside process_issue and the context helpers.
+_record_last_session() {
+    local label=$1
+    state_record_session "$REPO_SLUG" "$ISSUE_NUM" "$label" \
+        "${CLAUDE_LAST_TOKENS:-0}" "${CLAUDE_LAST_TOK_INPUT:-0}" "${CLAUDE_LAST_TOK_OUTPUT:-0}" \
+        "${CLAUDE_LAST_TOK_CACHE_CREATE:-0}" "${CLAUDE_LAST_TOK_CACHE_READ:-0}"
+}
+
 # process_issue N — orchestriert den kompletten Zyklus für Issue N.
 process_issue() {
     local n=$1
@@ -61,6 +70,7 @@ process_issue() {
         LAST_ERROR="plan session failed"
         return 1
     fi
+    _record_last_session "plan"
     if [[ ! -s $PLAN_MD_PATH ]] && [[ ${DRY_RUN:-0} != 1 ]]; then
         LAST_ERROR="plan session did not create $PLAN_MD_PATH"
         return 1
@@ -71,6 +81,7 @@ process_issue() {
         LAST_ERROR="code session failed"
         return 1
     fi
+    _record_last_session "code"
     if [[ ${DRY_RUN:-0} == 1 ]]; then
         log_warn "DRY-RUN: skipping commit / review / PR steps."
         LAST_PR_URL="[dry-run]"
@@ -100,6 +111,7 @@ process_issue() {
             last_status="NEEDS_FIX"
             continue
         fi
+        _record_last_session "review-${i}"
         status_line=$(printf '%s\n' "$CLAUDE_LAST_RESULT" | tail -n1 | tr -d '[:space:]')
         case $status_line in
             STATUS:OK)        last_status="OK"; log_ok "Review $i: OK"; break ;;
@@ -115,6 +127,7 @@ process_issue() {
                 log_warn "Fix session $i failed — moving on."
                 continue
             fi
+            _record_last_session "fix-${i}"
             (
                 cd "$REPO_PATH" || exit 1
                 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -151,6 +164,10 @@ process_issue() {
 
     # ---- Post-PR: update CLAUDE.md if warranted ----
     update_claude_md || true
+
+    # ---- Finalize usage & log summary ----
+    state_finalize_usage "$REPO_SLUG" "$n"
+    usage_log_issue "$REPO_SLUG" "$n"
 
     return 0
 }

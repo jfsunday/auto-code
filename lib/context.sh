@@ -17,6 +17,7 @@ ensure_claude_md() {
         LAST_ERROR="project-init session failed"
         return 1
     fi
+    _record_last_session "init"
     if [[ ! -f $claude_md ]]; then
         LAST_ERROR="project-init did not create CLAUDE.md"
         return 1
@@ -41,6 +42,7 @@ update_claude_md() {
         log_warn "context-update session failed — skipping."
         return 0
     fi
+    _record_last_session "context-update"
     local last_line
     last_line=$(printf '%s\n' "$CLAUDE_LAST_RESULT" | tail -n1 | tr -d '[:space:]')
     if [[ $last_line != STATUS:UPDATED ]]; then

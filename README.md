@@ -69,7 +69,29 @@ auto-code myuser/myrepo --issue 42 --max-reviews 2 --verbose
 
 # Dry run to inspect prompts before spending API credits
 auto-code myuser/myrepo --issue 42 --dry-run --verbose
+
+# Token usage: per-repo breakdown or lifetime totals
+auto-code --usage myuser/myrepo
+auto-code --usage
 ```
+
+## Token usage tracking
+
+Every Claude session (init / plan / code / review-N / fix-N / context-update) has
+its token counts recorded to `~/.config/autocoding/state/<slug>.json` and
+aggregated into `~/.config/autocoding/usage-global.json`.
+
+Reported metric is a single number — sum of `input + output + cache_creation + cache_read`
+— matching the counter that the Claude Code CLI (and typical proxy setups) show.
+The breakdown is stored too, in case you want to inspect it later with `jq`.
+
+Where it shows up:
+
+- **End of each issue** — a log line like
+  `Issue #42 usage: 45.2k tokens (plan 5.1k · code 22.0k · review-1 8.0k · review-2 10.1k)`
+- **End of each cycle** — `Cycle done. Repo total: 128.4k · Lifetime: 3.2M`
+- **On demand** — `auto-code --usage <owner/repo>` for a per-issue breakdown,
+  or `auto-code --usage` for lifetime totals across all repos
 
 ## Layout
 
@@ -85,6 +107,7 @@ lib/
   claude.sh          # claude_run() — headless invocation with retry/backoff
   context.sh         # ensure_claude_md, update_claude_md
   workflow.sh        # process_issue: plan → code → review×N → PR
+  usage.sh           # Token usage formatting and reporting
 prompts/             # envsubst templates (edit to tune tone/rigor)
 ```
 

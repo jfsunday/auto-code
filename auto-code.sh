@@ -24,6 +24,8 @@ source "$LIB_DIR/github.sh"
 source "$LIB_DIR/claude.sh"
 # shellcheck source=lib/context.sh
 source "$LIB_DIR/context.sh"
+# shellcheck source=lib/usage.sh
+source "$LIB_DIR/usage.sh"
 # shellcheck source=lib/workflow.sh
 source "$LIB_DIR/workflow.sh"
 
@@ -50,6 +52,10 @@ Behavior:
   --dry-run             Render prompts and stop before the first Claude call
   --verbose             Live-stream Claude session output
 
+Token usage report (no cycle, no watch — prints and exits):
+  --usage               Show lifetime totals + top repos
+  --usage <owner/repo>  Show per-issue breakdown for that repo
+
   -h, --help            Show this help
 EOF
 }
@@ -62,6 +68,7 @@ WATCH=0
 DRY_RUN=0
 VERBOSE=0
 FORCE_RETRY=0
+USAGE_MODE=0
 
 # Argument parsing --------------------------------------------------------
 if [[ $# -eq 0 ]]; then usage; exit 0; fi
@@ -82,6 +89,7 @@ while (( $# )); do
         --retry) FORCE_RETRY=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         --verbose) VERBOSE=1; shift ;;
+        --usage) USAGE_MODE=1; shift ;;
         --) shift; break ;;
         -*) log_error "Unknown option: $1"; usage; exit 2 ;;
         *)
@@ -91,6 +99,17 @@ while (( $# )); do
             shift ;;
     esac
 done
+
+# --usage mode: report and exit. Repo spec optional here.
+if (( USAGE_MODE )); then
+    if [[ -n $REPO_SPEC ]]; then
+        parse_repo_spec "$REPO_SPEC" || exit 2
+        usage_report_repo "$REPO_SLUG"
+    else
+        usage_report_global
+    fi
+    exit 0
+fi
 
 if [[ -z $REPO_SPEC ]]; then
     log_error "Missing <owner/repo> argument."
@@ -140,6 +159,7 @@ run_cycle() {
             rc=1
         fi
     done
+    usage_log_cycle "$REPO_SLUG"
     return $rc
 }
 

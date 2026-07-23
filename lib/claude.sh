@@ -30,6 +30,7 @@ claude_run() {
         echo "--- end prompt ---"
         CLAUDE_LAST_RESULT="[DRY-RUN result for $label]"
         export CLAUDE_LAST_RESULT
+        _claude_reset_usage
         return 0
     fi
 
@@ -63,7 +64,8 @@ claude_run() {
 }
 
 # Internal: runs one claude invocation, verbose or not, extracts result into
-# CLAUDE_LAST_RESULT. Returns 0 iff a non-empty result was produced.
+# CLAUDE_LAST_RESULT and usage numbers into CLAUDE_LAST_TOKENS etc.
+# Returns 0 iff a non-empty result was produced.
 _claude_do() {
     local sess_out=$1; shift
     local rc
@@ -84,11 +86,13 @@ _claude_do() {
         (( VERBOSE == 1 )) && echo
         [[ $rc -ne 0 ]] && return 1
         CLAUDE_LAST_RESULT=$(jq -r 'select(.type=="result") | .result // empty' "$sess_out" 2>/dev/null | tail -1)
+        _claude_extract_usage_stream "$sess_out"
     else
         if ! (cd "$REPO_PATH" && "$@" --output-format json) >"$sess_out" 2>>"${LOG_FILE:-/dev/null}"; then
             return 1
         fi
         CLAUDE_LAST_RESULT=$(jq -r '.result // empty' "$sess_out" 2>/dev/null)
+        _claude_extract_usage_single "$sess_out"
     fi
 
     if [[ -z ${CLAUDE_LAST_RESULT:-} ]]; then
@@ -96,5 +100,73 @@ _claude_do() {
         return 1
     fi
     export CLAUDE_LAST_RESULT
+    log_info "Session tokens: input=$CLAUDE_LAST_TOK_INPUT output=$CLAUDE_LAST_TOK_OUTPUT cache_c=$CLAUDE_LAST_TOK_CACHE_CREATE cache_r=$CLAUDE_LAST_TOK_CACHE_READ (sum=$CLAUDE_LAST_TOKENS)"
     return 0
+}
+
+# Extract usage from --output-format json (single object).
+_claude_extract_usage_single() {
+    local f=$1
+    _claude_reset_usage
+    [[ -f $f ]] || return 0
+    # Accept usage at .usage or nested at .result.usage — different Claude Code versions vary.
+    local vals
+    vals=$(jq -r '
+        (.usage // .result.usage // {}) as $u |
+        [
+          ($u.input_tokens // 0),
+          ($u.output_tokens // 0),
+          ($u.cache_creation_input_tokens // 0),
+          ($u.cache_read_input_tokens // 0)
+        ] | @tsv
+    ' "$f" 2>/dev/null) || return 0
+    _claude_assign_usage "$vals"
+}
+
+# Extract usage from --output-format stream-json (NDJSON). The `result` event
+# holds the final aggregated usage; some builds also emit per-message usage
+# updates. We take the last `result` event's usage.
+_claude_extract_usage_stream() {
+    local f=$1
+    _claude_reset_usage
+    [[ -f $f ]] || return 0
+    local vals
+    vals=$(jq -r --slurp '
+        map(select(.type == "result")) | last as $r |
+        (($r // {}).usage // {}) as $u |
+        [
+          ($u.input_tokens // 0),
+          ($u.output_tokens // 0),
+          ($u.cache_creation_input_tokens // 0),
+          ($u.cache_read_input_tokens // 0)
+        ] | @tsv
+    ' "$f" 2>/dev/null) || return 0
+    _claude_assign_usage "$vals"
+}
+
+_claude_reset_usage() {
+    CLAUDE_LAST_TOK_INPUT=0
+    CLAUDE_LAST_TOK_OUTPUT=0
+    CLAUDE_LAST_TOK_CACHE_CREATE=0
+    CLAUDE_LAST_TOK_CACHE_READ=0
+    CLAUDE_LAST_TOKENS=0
+    export CLAUDE_LAST_TOK_INPUT CLAUDE_LAST_TOK_OUTPUT CLAUDE_LAST_TOK_CACHE_CREATE CLAUDE_LAST_TOK_CACHE_READ CLAUDE_LAST_TOKENS
+}
+
+# Args: tab-separated "input\toutput\tcache_create\tcache_read"
+_claude_assign_usage() {
+    local tsv=$1
+    [[ -z $tsv ]] && return 0
+    IFS=$'\t' read -r CLAUDE_LAST_TOK_INPUT CLAUDE_LAST_TOK_OUTPUT CLAUDE_LAST_TOK_CACHE_CREATE CLAUDE_LAST_TOK_CACHE_READ <<<"$tsv"
+    : "${CLAUDE_LAST_TOK_INPUT:=0}"
+    : "${CLAUDE_LAST_TOK_OUTPUT:=0}"
+    : "${CLAUDE_LAST_TOK_CACHE_CREATE:=0}"
+    : "${CLAUDE_LAST_TOK_CACHE_READ:=0}"
+    CLAUDE_LAST_TOKENS=$(( CLAUDE_LAST_TOK_INPUT + CLAUDE_LAST_TOK_OUTPUT + CLAUDE_LAST_TOK_CACHE_CREATE + CLAUDE_LAST_TOK_CACHE_READ ))
+    export CLAUDE_LAST_TOK_INPUT CLAUDE_LAST_TOK_OUTPUT CLAUDE_LAST_TOK_CACHE_CREATE CLAUDE_LAST_TOK_CACHE_READ CLAUDE_LAST_TOKENS
+    if (( CLAUDE_LAST_TOKENS == 0 )) && [[ -z ${CLAUDE_WARNED_NO_USAGE:-} ]]; then
+        log_warn "No usage numbers found in session output — token tracking will report 0."
+        CLAUDE_WARNED_NO_USAGE=1
+        export CLAUDE_WARNED_NO_USAGE
+    fi
 }
