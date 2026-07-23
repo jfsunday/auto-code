@@ -75,6 +75,40 @@ auto-code --usage myuser/myrepo
 auto-code --usage
 ```
 
+## Skipping context sessions per repo
+
+Some projects don't want auto-code touching `CLAUDE.md` — maybe the doc is
+hand-curated, maybe you just don't want the extra token spend. Two toggles
+control the "context" sessions:
+
+| Flag | Effect |
+| --- | --- |
+| `--no-init` | Skip the CLAUDE.md init session. If `CLAUDE.md` exists, it's still read; if not, Claude runs without it. |
+| `--init` | Re-enable init (overrides a persisted `--no-init`) |
+| `--no-context-update` | Skip the post-PR "should CLAUDE.md be updated?" session |
+| `--context-update` | Re-enable context-update |
+| `--reset-options` | Wipe persisted per-repo options back to defaults |
+
+These flags **auto-persist** into `~/.config/autocoding/state/<slug>.json`
+under `.settings`. Next time you run auto-code on the same repo, the toggle
+stays — no need to remember the flag.
+
+```bash
+# Turn both off for this repo, from now on
+auto-code myuser/myrepo --no-init --no-context-update
+
+# Later, all future runs remember the choice — no flag needed
+auto-code myuser/myrepo
+
+# Turn init back on but keep context-update off
+auto-code myuser/myrepo --init
+
+# Start over
+auto-code myuser/myrepo --reset-options
+```
+
+Effective options are logged at the top of every run: `Options: init=0 context_update=1`.
+
 ## Token usage tracking
 
 Every Claude session (init / plan / code / review-N / fix-N / context-update) has

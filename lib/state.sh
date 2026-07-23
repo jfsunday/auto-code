@@ -45,6 +45,43 @@ state_mark_processed() {
         "$file" >"$tmp" && mv "$tmp" "$file"
 }
 
+# --- Per-repo settings (currently: init, context_update) ---
+
+# state_get_setting <slug> <key>
+# Prints "1" or "0" if set, otherwise nothing.
+state_get_setting() {
+    local slug=$1 key=$2 file
+    file=$(_state_file "$slug")
+    [[ -f $file ]] || return 0
+    jq -r --arg k "$key" '
+        .settings[$k]
+        | if . == null then empty
+          elif type == "boolean" then (if . then "1" else "0" end)
+          else . | tostring end
+    ' "$file"
+}
+
+# state_set_setting <slug> <key> <0|1>
+state_set_setting() {
+    local slug=$1 key=$2 val=$3
+    state_ensure "$slug"
+    local file bool tmp
+    file=$(_state_file "$slug")
+    if [[ $val == 1 ]]; then bool=true; else bool=false; fi
+    tmp=$(mktemp)
+    jq --arg k "$key" --argjson v "$bool" \
+        '.settings //= {} | .settings[$k] = $v' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
+# state_reset_settings <slug> — wipes .settings
+state_reset_settings() {
+    local slug=$1 file tmp
+    file=$(_state_file "$slug")
+    [[ -f $file ]] || return 0
+    tmp=$(mktemp)
+    jq 'del(.settings)' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
 state_mark_error() {
     local slug=$1 num=$2 msg=$3 file ts
     file=$(_state_file "$slug")

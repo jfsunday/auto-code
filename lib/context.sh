@@ -10,6 +10,10 @@ ensure_claude_md() {
         log_info "CLAUDE.md already present."
         return 0
     fi
+    if (( ${SETTING_INIT:-1} == 0 )); then
+        log_info "CLAUDE.md missing but init disabled for this repo — running without project context."
+        return 0
+    fi
 
     log_info "CLAUDE.md missing — running project-init session."
     local out_dir="$AUTOCODING_LOG_DIR/$REPO_SLUG/issue-${ISSUE_NUM}"
@@ -36,6 +40,10 @@ ensure_claude_md() {
 # Runs the context-update prompt after a successful PR; if Claude signals
 # STATUS: UPDATED, commits and pushes the CLAUDE.md change to $BASE_BRANCH.
 update_claude_md() {
+    if (( ${SETTING_CONTEXT_UPDATE:-1} == 0 )); then
+        log_info "context-update skipped (disabled for this repo)."
+        return 0
+    fi
     local out_dir="$AUTOCODING_LOG_DIR/$REPO_SLUG/issue-${ISSUE_NUM}"
     log_info "Running context-update session (post-PR)."
     if ! claude_run "$PROMPTS_DIR/context-update.md" "$out_dir" "context-update"; then

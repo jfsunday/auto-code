@@ -56,6 +56,13 @@ Token usage report (no cycle, no watch — prints and exits):
   --usage               Show lifetime totals + top repos
   --usage <owner/repo>  Show per-issue breakdown for that repo
 
+Optional context sessions (auto-persisted per repo):
+  --no-init             Skip CLAUDE.md init session; use existing CLAUDE.md if any
+  --init                Re-enable init (overrides persisted --no-init)
+  --no-context-update   Skip post-PR context-update session
+  --context-update      Re-enable context-update
+  --reset-options       Wipe persisted per-repo settings back to defaults
+
   -h, --help            Show this help
 EOF
 }
@@ -69,6 +76,11 @@ DRY_RUN=0
 VERBOSE=0
 FORCE_RETRY=0
 USAGE_MODE=0
+CLI_INIT_SET=0
+CLI_INIT_VAL=1
+CLI_CTX_SET=0
+CLI_CTX_VAL=1
+RESET_OPTIONS=0
 
 # Argument parsing --------------------------------------------------------
 if [[ $# -eq 0 ]]; then usage; exit 0; fi
@@ -90,6 +102,11 @@ while (( $# )); do
         --dry-run) DRY_RUN=1; shift ;;
         --verbose) VERBOSE=1; shift ;;
         --usage) USAGE_MODE=1; shift ;;
+        --no-init)            CLI_INIT_SET=1; CLI_INIT_VAL=0; shift ;;
+        --init)               CLI_INIT_SET=1; CLI_INIT_VAL=1; shift ;;
+        --no-context-update)  CLI_CTX_SET=1;  CLI_CTX_VAL=0;  shift ;;
+        --context-update)     CLI_CTX_SET=1;  CLI_CTX_VAL=1;  shift ;;
+        --reset-options)      RESET_OPTIONS=1; shift ;;
         --) shift; break ;;
         -*) log_error "Unknown option: $1"; usage; exit 2 ;;
         *)
@@ -119,9 +136,34 @@ fi
 parse_repo_spec "$REPO_SPEC" || exit 2
 mkdir -p "$REPOS_DIR"
 
+# --- Options load-order: defaults → persisted → CLI overrides → auto-persist ---
+state_ensure "$REPO_SLUG"
+
+if (( RESET_OPTIONS )); then
+    state_reset_settings "$REPO_SLUG"
+    log_info "Options for ${REPO_OWNER}/${REPO_NAME} reset to defaults."
+fi
+
+SETTING_INIT=1
+SETTING_CONTEXT_UPDATE=1
+_val=$(state_get_setting "$REPO_SLUG" init);           [[ -n $_val ]] && SETTING_INIT=$_val
+_val=$(state_get_setting "$REPO_SLUG" context_update); [[ -n $_val ]] && SETTING_CONTEXT_UPDATE=$_val
+
+if (( CLI_INIT_SET )); then
+    SETTING_INIT=$CLI_INIT_VAL
+    state_set_setting "$REPO_SLUG" init "$CLI_INIT_VAL"
+fi
+if (( CLI_CTX_SET )); then
+    SETTING_CONTEXT_UPDATE=$CLI_CTX_VAL
+    state_set_setting "$REPO_SLUG" context_update "$CLI_CTX_VAL"
+fi
+
+log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE"
+
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
 export DRY_RUN VERBOSE FORCE_RETRY CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
+export SETTING_INIT SETTING_CONTEXT_UPDATE
 
 # Main run: process one selection cycle. Called once, or repeatedly in watch mode.
 run_cycle() {
