@@ -31,8 +31,12 @@ ensure_claude_md() {
         cd "$REPO_PATH" || exit 1
         git checkout "$BASE_BRANCH"
         git add CLAUDE.md
-        git commit -m "Initialize CLAUDE.md project context" >/dev/null
-        git push origin "$BASE_BRANCH"
+        git_commit "Initialize CLAUDE.md project context" >/dev/null
+        if [[ ${BOT_ACTIVE:-0} == 1 ]]; then
+            git_push_bot "$BASE_BRANCH"
+        else
+            git push origin "$BASE_BRANCH"
+        fi
     ) || { LAST_ERROR="failed to commit CLAUDE.md"; return 1; }
     log_ok "CLAUDE.md initialized and pushed to $BASE_BRANCH."
 }
@@ -70,8 +74,12 @@ update_claude_md() {
             exit 0
         fi
         git add CLAUDE.md
-        git commit -m "Update CLAUDE.md context after issue #${ISSUE_NUM}" >/dev/null
-        git push origin "$BASE_BRANCH"
+        git_commit "Update CLAUDE.md context after issue #${ISSUE_NUM}" >/dev/null
+        if [[ ${BOT_ACTIVE:-0} == 1 ]]; then
+            git_push_bot "$BASE_BRANCH"
+        else
+            git push origin "$BASE_BRANCH"
+        fi
     ) || log_warn "context-update commit failed — continuing."
     rm -f "$tmp"
 }

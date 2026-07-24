@@ -75,6 +75,46 @@ auto-code --usage myuser/myrepo
 auto-code --usage
 ```
 
+## Running as a separate GitHub account (bot identity)
+
+You can point the script at a different GitHub account for all its actions
+(`gh` calls + `git push` + `git` author of commits + PR author). Your normal
+shell still uses your default account — only the script switches, per run.
+
+**Setup — one-time:**
+
+1. Log the bot user into `gh` (adds a second account, keeps your primary active):
+   ```bash
+   gh auth login
+   #  → GitHub.com → HTTPS (or SSH) → Login with web browser
+   #  → sign in as the bot user (e.g. `accoding9173`) in the browser
+   ```
+
+2. Give the bot access to the target repo (once per repo):
+   ```bash
+   gh api -X PUT repos/OWNER/REPO/collaborators/BOT_USER -f permission=push
+   #  → bot needs to accept the invite: https://github.com/OWNER/REPO/invitations
+   ```
+
+3. Enable in `~/.config/autocoding/config.env`:
+   ```
+   AUTOCODING_GH_USER="accoding9173"
+   AUTOCODING_GIT_NAME="accoding9173"
+   AUTOCODING_GIT_EMAIL="accoding9173@users.noreply.github.com"
+   ```
+
+That's it. Your normal `gh` calls still hit the default (`gh auth status` still
+shows your primary as active). Only `auto-code` runs pull the bot's token via
+`gh auth token --user "$AUTOCODING_GH_USER"` and use it for:
+
+- `gh issue view/list` — reading issues as bot
+- `git push` — pushed via https+token URL (independent of origin protocol)
+- `git commit` — author + committer set to bot
+- `gh pr create` — PR opened by bot
+
+**If the bot's token can't be found, the script exits hard.** No silent
+fallback to your primary account — matches "either bot or don't push".
+
 ## Skipping context sessions per repo
 
 Some projects don't want auto-code touching `CLAUDE.md` — maybe the doc is
@@ -141,6 +181,7 @@ lib/
   claude.sh          # claude_run() — headless invocation with retry/backoff
   context.sh         # ensure_claude_md, update_claude_md
   workflow.sh        # process_issue: plan → code → review×N → PR
+  auth.sh            # Optional bot identity (GH_TOKEN, git author, push URL)
   usage.sh           # Token usage formatting and reporting
 prompts/             # envsubst templates (edit to tune tone/rigor)
 ```

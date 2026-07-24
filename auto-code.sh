@@ -16,6 +16,8 @@ PROMPTS_DIR="$SCRIPT_DIR/prompts"
 source "$LIB_DIR/config.sh"
 # shellcheck source=lib/logging.sh
 source "$LIB_DIR/logging.sh"
+# shellcheck source=lib/auth.sh
+source "$LIB_DIR/auth.sh"
 # shellcheck source=lib/state.sh
 source "$LIB_DIR/state.sh"
 # shellcheck source=lib/github.sh
@@ -146,6 +148,9 @@ fi
 parse_repo_spec "$REPO_SPEC" || exit 2
 mkdir -p "$REPOS_DIR"
 
+# Activate bot identity if configured. Fails hard on misconfig.
+bot_auth_setup
+
 # --- Options load-order: defaults → persisted → CLI overrides → auto-persist ---
 state_ensure "$REPO_SLUG"
 
@@ -173,7 +178,7 @@ log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE"
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
 export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE RESUME CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
-export SETTING_INIT SETTING_CONTEXT_UPDATE
+export SETTING_INIT SETTING_CONTEXT_UPDATE AUTOCODING_GH_USER AUTOCODING_GIT_NAME AUTOCODING_GIT_EMAIL BOT_ACTIVE
 
 (( LOCAL_MODE )) && log_info "Local mode: no push, no PR, no context-update."
 

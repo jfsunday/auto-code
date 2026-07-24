@@ -21,6 +21,14 @@ set -o pipefail
 : "${CLAUDE_BACKOFF_BASE:=5}"
 : "${CLAUDE_MAX_BUDGET_USD:=}"
 
+# Bot identity (optional). If AUTOCODING_GH_USER is set, all gh/git calls the
+# script makes are done as that GitHub user via `gh auth token --user <user>`.
+# Your normal shell keeps whatever gh account is active — only the script
+# switches, per-invocation.
+: "${AUTOCODING_GH_USER:=}"
+: "${AUTOCODING_GIT_NAME:=}"
+: "${AUTOCODING_GIT_EMAIL:=}"
+
 # Load user overrides
 if [[ -r "$AUTOCODING_CONFIG_FILE" ]]; then
     # shellcheck disable=SC1090

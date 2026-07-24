@@ -110,7 +110,7 @@ process_issue() {
         (
             cd "$REPO_PATH" || exit 1
             git add -A
-            git commit -m "Implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
+            git_commit "Implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
         ) || { LAST_ERROR="initial commit failed"; return 1; }
     else
         # --- Resume path: checkout existing branch, commit outstanding, proceed ---
@@ -132,7 +132,7 @@ process_issue() {
             (
                 cd "$REPO_PATH" || exit 1
                 git add -A
-                git commit -m "Resume: implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
+                git_commit "Resume: implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
             ) || { LAST_ERROR="resume commit failed"; return 1; }
         else
             local commits_ahead
@@ -165,7 +165,7 @@ process_issue() {
         esac
 
         # Commit whatever the review session may have written (review MD)
-        (cd "$REPO_PATH" && git add -A && git diff --cached --quiet || git commit -m "Add review $i for issue #${n}" >/dev/null) || true
+        (cd "$REPO_PATH" && git add -A && git diff --cached --quiet || git_commit "Add review $i for issue #${n}" >/dev/null) || true
 
         if [[ $last_status == NEEDS_FIX ]] && (( i < MAX_REVIEWS )); then
             if ! claude_run "$PROMPTS_DIR/fix.md" "$sess_dir" "fix-${i}"; then
@@ -177,7 +177,7 @@ process_issue() {
                 cd "$REPO_PATH" || exit 1
                 if ! git diff --quiet || ! git diff --cached --quiet; then
                     git add -A
-                    git commit -m "Review fix ${i} for issue #${n}" >/dev/null
+                    git_commit "Review fix ${i} for issue #${n}" >/dev/null
                 else
                     echo "fix session $i produced no diff" >&2
                 fi
@@ -187,7 +187,7 @@ process_issue() {
 
     # ---- Summary + PR body ----
     _build_pr_body "$n" "$last_status" "$SUMMARY_MD_PATH"
-    (cd "$REPO_PATH" && git add -A && (git diff --cached --quiet || git commit -m "Add PR summary for issue #${n}" >/dev/null)) || true
+    (cd "$REPO_PATH" && git add -A && (git diff --cached --quiet || git_commit "Add PR summary for issue #${n}" >/dev/null)) || true
 
     if (( ${LOCAL_MODE:-0} == 1 )); then
         LAST_PR_URL="[local:${WORK_BRANCH}]"
@@ -198,7 +198,7 @@ process_issue() {
     fi
 
     # ---- Push + PR ----
-    if ! (cd "$REPO_PATH" && git push -u origin "$WORK_BRANCH" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"); then
+    if ! (cd "$REPO_PATH" && git_push_bot "$WORK_BRANCH" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"); then
         LAST_ERROR="git push failed"
         return 1
     fi
