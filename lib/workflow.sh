@@ -31,20 +31,24 @@ process_issue() {
     fi
     log_info "Issue title: $ISSUE_TITLE"
 
-    # Work branch name (needed early so --resume can look for it)
-    local slug; slug=$(slugify "$ISSUE_TITLE")
-    WORK_BRANCH="auto/issue-${n}-${slug}"
-    export WORK_BRANCH
-
-    # Auto-resume whenever a local work branch already exists — no need to
-    # pass --resume explicitly. The flag is kept for clarity/back-compat.
+    # Auto-resume whenever ANY local branch matching auto/issue-N-* exists
+    # (title slug may have drifted; glob-match handles it). The --resume flag
+    # is kept for back-compat but does nothing extra.
     local RESUME_MODE=0
+    local existing_branch=""
     if [[ -d "$REPO_PATH/.git" ]]; then
-        if (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$WORK_BRANCH" >/dev/null); then
-            RESUME_MODE=1
-            log_info "Found existing work branch $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
-        fi
+        existing_branch=$(cd "$REPO_PATH" && git branch --list "auto/issue-${n}-*" 2>/dev/null \
+            | sed -E 's/^[* ]+//' | head -1)
     fi
+    if [[ -n $existing_branch ]]; then
+        WORK_BRANCH=$existing_branch
+        RESUME_MODE=1
+        log_info "Found existing work branch $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
+    else
+        local slug; slug=$(slugify "$ISSUE_TITLE")
+        WORK_BRANCH="auto/issue-${n}-${slug}"
+    fi
+    export WORK_BRANCH
 
     # Session output dir (rendered prompts + session json, kept outside repo)
     local sess_dir="$AUTOCODING_LOG_DIR/$REPO_SLUG/issue-${n}"
