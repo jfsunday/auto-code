@@ -36,14 +36,13 @@ process_issue() {
     WORK_BRANCH="auto/issue-${n}-${slug}"
     export WORK_BRANCH
 
-    # Detect resume opportunity: --resume flag + repo exists + local branch present
+    # Auto-resume whenever a local work branch already exists — no need to
+    # pass --resume explicitly. The flag is kept for clarity/back-compat.
     local RESUME_MODE=0
-    if (( ${RESUME:-0} == 1 )) && [[ -d "$REPO_PATH/.git" ]]; then
+    if [[ -d "$REPO_PATH/.git" ]]; then
         if (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$WORK_BRANCH" >/dev/null); then
             RESUME_MODE=1
-            log_info "Resume: found existing work branch $WORK_BRANCH — skipping init/plan/code."
-        else
-            log_info "Resume: no local branch $WORK_BRANCH — falling back to fresh run."
+            log_info "Found existing work branch $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
         fi
     fi
 

@@ -18,6 +18,28 @@ _processed_ids_json() {
     fi
 }
 
+# True (0) if a local branch matching auto/issue-<n>-* exists in the target repo.
+_has_work_branch() {
+    local n=$1
+    [[ -d "$REPO_PATH/.git" ]] || return 1
+    local out
+    out=$(cd "$REPO_PATH" && git branch --list "auto/issue-${n}-*" 2>/dev/null)
+    [[ -n $out ]]
+}
+
+# Splits stdin (one number per line) into "in progress first, then the rest",
+# preserving relative order within each group.
+_reorder_in_progress_first() {
+    local -a hanging=() rest=()
+    local n
+    while IFS= read -r n; do
+        [[ -z $n ]] && continue
+        if _has_work_branch "$n"; then hanging+=("$n"); else rest+=("$n"); fi
+    done
+    (( ${#hanging[@]} > 0 )) && printf '%s\n' "${hanging[@]}"
+    (( ${#rest[@]}    > 0 )) && printf '%s\n' "${rest[@]}"
+}
+
 # Select which issue numbers to process. Prints one issue number per line.
 # Args: MODE ARG
 #   oldest       -> newest 1
@@ -38,25 +60,31 @@ select_issues() {
             ;;
         oldest)
             local ex; ex=$(_processed_ids_json)
+            # Get eligible issues in createdAt order, then bubble any hanging work-branch to the front.
             _gh issue list --state open --json number,createdAt --limit 100 \
                 | jq -r --argjson ex "$ex" '
                     [ .[] | select(.number as $n | ($ex | index($n)) | not) ]
-                    | sort_by(.createdAt) | .[0].number // empty'
+                    | sort_by(.createdAt) | .[].number' \
+                | _reorder_in_progress_first \
+                | head -1
             ;;
         n-oldest)
             [[ -z $arg ]] && { log_error "--n-oldest requires a count"; return 1; }
             local ex; ex=$(_processed_ids_json)
             _gh issue list --state open --json number,createdAt --limit 200 \
-                | jq -r --argjson n "$arg" --argjson ex "$ex" '
-                    [ .[] | select(.number as $n2 | ($ex | index($n2)) | not) ]
-                    | sort_by(.createdAt) | .[0:$n] | .[].number'
+                | jq -r --argjson ex "$ex" '
+                    [ .[] | select(.number as $n | ($ex | index($n)) | not) ]
+                    | sort_by(.createdAt) | .[].number' \
+                | _reorder_in_progress_first \
+                | head -n "$arg"
             ;;
         all)
             local ex; ex=$(_processed_ids_json)
             _gh issue list --state open --json number,createdAt --limit 500 \
                 | jq -r --argjson ex "$ex" '
                     [ .[] | select(.number as $n | ($ex | index($n)) | not) ]
-                    | sort_by(.createdAt) | .[].number'
+                    | sort_by(.createdAt) | .[].number' \
+                | _reorder_in_progress_first
             ;;
         *)
             log_error "Unknown selection mode: $mode"; return 1 ;;

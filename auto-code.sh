@@ -56,9 +56,9 @@ Behavior:
   --local               Work locally only: no push, no PR, no context-update.
                         Issue is NOT marked processed — a later run without
                         --local can finish/push it (combine with --resume).
-  --resume              If a local work branch `auto/issue-N-*` already exists,
-                        skip init/plan/code, commit any outstanding files, and
-                        continue with review + push + PR (or --local).
+  --resume              (No-op: resume happens automatically when a local
+                        work branch `auto/issue-N-*` exists. In query modes
+                        --oldest/--n-oldest/--all, hanging issues jump ahead.)
 
 Token usage report (no cycle, no watch — prints and exits):
   --usage               Show lifetime totals + top repos
