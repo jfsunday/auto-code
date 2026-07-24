@@ -54,6 +54,9 @@ Behavior:
   --local               Work locally only: no push, no PR, no context-update.
                         Issue is NOT marked processed — a later run without
                         --local can finish/push it (combine with --resume).
+  --resume              If a local work branch `auto/issue-N-*` already exists,
+                        skip init/plan/code, commit any outstanding files, and
+                        continue with review + push + PR (or --local).
 
 Token usage report (no cycle, no watch — prints and exits):
   --usage               Show lifetime totals + top repos
@@ -80,6 +83,7 @@ VERBOSE=0
 FORCE_RETRY=0
 USAGE_MODE=0
 LOCAL_MODE=0
+RESUME=0
 CLI_INIT_SET=0
 CLI_INIT_VAL=1
 CLI_CTX_SET=0
@@ -107,6 +111,7 @@ while (( $# )); do
         --verbose) VERBOSE=1; shift ;;
         --usage) USAGE_MODE=1; shift ;;
         --local) LOCAL_MODE=1; shift ;;
+        --resume) RESUME=1; shift ;;
         --no-init)            CLI_INIT_SET=1; CLI_INIT_VAL=0; shift ;;
         --init)               CLI_INIT_SET=1; CLI_INIT_VAL=1; shift ;;
         --no-context-update)  CLI_CTX_SET=1;  CLI_CTX_VAL=0;  shift ;;
@@ -166,7 +171,7 @@ fi
 log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE"
 
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
-export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
+export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE RESUME CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
 export SETTING_INIT SETTING_CONTEXT_UPDATE
 

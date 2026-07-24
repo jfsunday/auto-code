@@ -31,27 +31,21 @@ process_issue() {
     fi
     log_info "Issue title: $ISSUE_TITLE"
 
-    if ! gh_clone_if_missing; then
-        LAST_ERROR="clone/sync of ${REPO_OWNER}/${REPO_NAME} failed"
-        return 1
-    fi
-
-    if ! ensure_claude_md; then
-        [[ -z $LAST_ERROR ]] && LAST_ERROR="CLAUDE.md init failed"
-        return 1
-    fi
-
-    # Work branch
+    # Work branch name (needed early so --resume can look for it)
     local slug; slug=$(slugify "$ISSUE_TITLE")
     WORK_BRANCH="auto/issue-${n}-${slug}"
-    log_info "Work branch: $WORK_BRANCH"
-    (
-        cd "$REPO_PATH" || exit 1
-        git checkout "$BASE_BRANCH" >/dev/null
-        # Delete stale local branch of same name (safe: nothing pushed under this name for retries; user can rename manually if they want to keep it)
-        git branch -D "$WORK_BRANCH" 2>/dev/null || true
-        git checkout -b "$WORK_BRANCH" >/dev/null
-    ) || { LAST_ERROR="branch checkout failed"; return 1; }
+    export WORK_BRANCH
+
+    # Detect resume opportunity: --resume flag + repo exists + local branch present
+    local RESUME_MODE=0
+    if (( ${RESUME:-0} == 1 )) && [[ -d "$REPO_PATH/.git" ]]; then
+        if (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$WORK_BRANCH" >/dev/null); then
+            RESUME_MODE=1
+            log_info "Resume: found existing work branch $WORK_BRANCH — skipping init/plan/code."
+        else
+            log_info "Resume: no local branch $WORK_BRANCH — falling back to fresh run."
+        fi
+    fi
 
     # Session output dir (rendered prompts + session json, kept outside repo)
     local sess_dir="$AUTOCODING_LOG_DIR/$REPO_SLUG/issue-${n}"
@@ -60,45 +54,96 @@ process_issue() {
     # Paths for artefacts that live IN the repo (versioned with the branch)
     local ctx_dir_rel=".claude/context"
     local ctx_dir="$REPO_PATH/$ctx_dir_rel"
-    mkdir -p "$ctx_dir"
     PLAN_MD_PATH="$ctx_dir/issue-${n}-plan.md"
     SUMMARY_MD_PATH="$ctx_dir/issue-${n}-summary.md"
-    export PLAN_MD_PATH SUMMARY_MD_PATH WORK_BRANCH
+    export PLAN_MD_PATH SUMMARY_MD_PATH
 
-    # ---- Plan ----
-    if ! claude_run "$PROMPTS_DIR/plan.md" "$sess_dir" "plan"; then
-        LAST_ERROR="plan session failed"
-        return 1
-    fi
-    _record_last_session "plan"
-    if [[ ! -s $PLAN_MD_PATH ]] && [[ ${DRY_RUN:-0} != 1 ]]; then
-        LAST_ERROR="plan session did not create $PLAN_MD_PATH"
-        return 1
-    fi
+    if (( RESUME_MODE == 0 )); then
+        # --- Fresh path: sync repo, ensure CLAUDE.md, new branch, plan+code ---
+        if ! gh_clone_if_missing; then
+            LAST_ERROR="clone/sync of ${REPO_OWNER}/${REPO_NAME} failed"
+            return 1
+        fi
+        if ! ensure_claude_md; then
+            [[ -z $LAST_ERROR ]] && LAST_ERROR="CLAUDE.md init failed"
+            return 1
+        fi
+        mkdir -p "$ctx_dir"
 
-    # ---- Code ----
-    if ! claude_run "$PROMPTS_DIR/code.md" "$sess_dir" "code"; then
-        LAST_ERROR="code session failed"
-        return 1
-    fi
-    _record_last_session "code"
-    if [[ ${DRY_RUN:-0} == 1 ]]; then
-        log_warn "DRY-RUN: skipping commit / review / PR steps."
-        LAST_PR_URL="[dry-run]"
-        return 0
-    fi
+        log_info "Work branch: $WORK_BRANCH"
+        (
+            cd "$REPO_PATH" || exit 1
+            git checkout "$BASE_BRANCH" >/dev/null
+            git branch -D "$WORK_BRANCH" 2>/dev/null || true
+            git checkout -b "$WORK_BRANCH" >/dev/null
+        ) || { LAST_ERROR="branch checkout failed"; return 1; }
 
-    local changed_files
-    changed_files=$(cd "$REPO_PATH" && git status --porcelain | wc -l | tr -d ' ')
-    if [[ $changed_files == 0 ]]; then
-        LAST_ERROR="code session produced no changes"
-        return 1
+        # Plan
+        if ! claude_run "$PROMPTS_DIR/plan.md" "$sess_dir" "plan"; then
+            LAST_ERROR="plan session failed"
+            return 1
+        fi
+        _record_last_session "plan"
+        if [[ ! -s $PLAN_MD_PATH ]] && [[ ${DRY_RUN:-0} != 1 ]]; then
+            LAST_ERROR="plan session did not create $PLAN_MD_PATH"
+            return 1
+        fi
+
+        # Code
+        if ! claude_run "$PROMPTS_DIR/code.md" "$sess_dir" "code"; then
+            LAST_ERROR="code session failed"
+            return 1
+        fi
+        _record_last_session "code"
+        if [[ ${DRY_RUN:-0} == 1 ]]; then
+            log_warn "DRY-RUN: skipping commit / review / PR steps."
+            LAST_PR_URL="[dry-run]"
+            return 0
+        fi
+
+        local changed_files
+        changed_files=$(cd "$REPO_PATH" && git status --porcelain | wc -l | tr -d ' ')
+        if [[ $changed_files == 0 ]]; then
+            LAST_ERROR="code session produced no changes"
+            return 1
+        fi
+        (
+            cd "$REPO_PATH" || exit 1
+            git add -A
+            git commit -m "Implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
+        ) || { LAST_ERROR="initial commit failed"; return 1; }
+    else
+        # --- Resume path: checkout existing branch, commit outstanding, proceed ---
+        (
+            cd "$REPO_PATH" || exit 1
+            # Tolerate dirty: git checkout keeps modified files that don't conflict.
+            git checkout "$WORK_BRANCH" >/dev/null 2>&1
+        ) || { LAST_ERROR="resume checkout failed"; return 1; }
+        mkdir -p "$ctx_dir"
+
+        if [[ ! -f $PLAN_MD_PATH ]]; then
+            log_warn "Resume: $PLAN_MD_PATH missing — review pass will have less context."
+        fi
+
+        local dirty
+        dirty=$(cd "$REPO_PATH" && git status --porcelain | wc -l | tr -d ' ')
+        if (( dirty > 0 )); then
+            log_info "Resume: committing $dirty outstanding path(s) from previous run."
+            (
+                cd "$REPO_PATH" || exit 1
+                git add -A
+                git commit -m "Resume: implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
+            ) || { LAST_ERROR="resume commit failed"; return 1; }
+        else
+            local commits_ahead
+            commits_ahead=$(cd "$REPO_PATH" && git rev-list --count "${BASE_BRANCH}..HEAD" 2>/dev/null || echo 0)
+            if [[ $commits_ahead == 0 ]]; then
+                LAST_ERROR="resume: work branch has no commits and nothing to commit"
+                return 1
+            fi
+            log_info "Resume: nothing outstanding; $commits_ahead existing commit(s) ahead of $BASE_BRANCH."
+        fi
     fi
-    (
-        cd "$REPO_PATH" || exit 1
-        git add -A
-        git commit -m "Implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
-    ) || { LAST_ERROR="initial commit failed"; return 1; }
 
     # ---- Review loop ----
     local i status_line last_status="NEEDS_FIX"
