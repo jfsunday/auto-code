@@ -48,9 +48,15 @@ claude_run() {
     local backoff=$CLAUDE_BACKOFF_BASE
     for (( attempt=1; attempt<=max; attempt++ )); do
         log_info "Claude session '$label' — attempt $attempt/$max"
+        CLAUDE_LAST_ERROR_KIND=""
         if _claude_do "$sess_out" "${claude_cmd[@]}"; then
             log_ok "Claude '$label' finished."
             return 0
+        fi
+        # Deterministic failures — don't waste retries on them
+        if [[ $CLAUDE_LAST_ERROR_KIND == budget ]]; then
+            log_error "Session '$label' hit CLAUDE_MAX_BUDGET_USD=${CLAUDE_MAX_BUDGET_USD:-<unset>}. Increase or unset it in ~/.config/autocoding/config.env."
+            return 1
         fi
         log_warn "Attempt $attempt failed."
         if (( attempt < max )); then
@@ -109,7 +115,13 @@ _claude_extract_usage_single() {
     local f=$1
     _claude_reset_usage
     [[ -f $f ]] || return 0
-    # Accept usage at .usage or nested at .result.usage — different Claude Code versions vary.
+    # Detect deterministic error kinds
+    local subtype
+    subtype=$(jq -r '.subtype // empty' "$f" 2>/dev/null)
+    if [[ $subtype == error_max_budget_usd ]]; then
+        CLAUDE_LAST_ERROR_KIND=budget
+        export CLAUDE_LAST_ERROR_KIND
+    fi
     local vals
     vals=$(jq -r '
         (.usage // .result.usage // {}) as $u |
@@ -130,6 +142,11 @@ _claude_extract_usage_stream() {
     local f=$1
     _claude_reset_usage
     [[ -f $f ]] || return 0
+    # Detect deterministic error kinds in any of the result events
+    if jq -e --slurp 'any(.type=="result" and .subtype=="error_max_budget_usd")' "$f" >/dev/null 2>&1; then
+        CLAUDE_LAST_ERROR_KIND=budget
+        export CLAUDE_LAST_ERROR_KIND
+    fi
     local vals
     vals=$(jq -r --slurp '
         map(select(.type == "result")) | last as $r |
