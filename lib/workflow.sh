@@ -144,6 +144,14 @@ process_issue() {
     _build_pr_body "$n" "$last_status" "$SUMMARY_MD_PATH"
     (cd "$REPO_PATH" && git add -A && (git diff --cached --quiet || git commit -m "Add PR summary for issue #${n}" >/dev/null)) || true
 
+    if (( ${LOCAL_MODE:-0} == 1 )); then
+        LAST_PR_URL="[local:${WORK_BRANCH}]"
+        log_ok "Local mode: stopping after commits on branch $WORK_BRANCH"
+        state_finalize_usage "$REPO_SLUG" "$n"
+        usage_log_issue "$REPO_SLUG" "$n"
+        return 0
+    fi
+
     # ---- Push + PR ----
     if ! (cd "$REPO_PATH" && git push -u origin "$WORK_BRANCH" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"); then
         LAST_ERROR="git push failed"

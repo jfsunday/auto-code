@@ -51,6 +51,9 @@ Behavior:
   --retry               Reprocess even if state says done or errored
   --dry-run             Render prompts and stop before the first Claude call
   --verbose             Live-stream Claude session output
+  --local               Work locally only: no push, no PR, no context-update.
+                        Issue is NOT marked processed — a later run without
+                        --local can finish/push it (combine with --resume).
 
 Token usage report (no cycle, no watch — prints and exits):
   --usage               Show lifetime totals + top repos
@@ -76,6 +79,7 @@ DRY_RUN=0
 VERBOSE=0
 FORCE_RETRY=0
 USAGE_MODE=0
+LOCAL_MODE=0
 CLI_INIT_SET=0
 CLI_INIT_VAL=1
 CLI_CTX_SET=0
@@ -102,6 +106,7 @@ while (( $# )); do
         --dry-run) DRY_RUN=1; shift ;;
         --verbose) VERBOSE=1; shift ;;
         --usage) USAGE_MODE=1; shift ;;
+        --local) LOCAL_MODE=1; shift ;;
         --no-init)            CLI_INIT_SET=1; CLI_INIT_VAL=0; shift ;;
         --init)               CLI_INIT_SET=1; CLI_INIT_VAL=1; shift ;;
         --no-context-update)  CLI_CTX_SET=1;  CLI_CTX_VAL=0;  shift ;;
@@ -161,9 +166,11 @@ fi
 log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE"
 
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
-export DRY_RUN VERBOSE FORCE_RETRY CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
+export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
 export SETTING_INIT SETTING_CONTEXT_UPDATE
+
+(( LOCAL_MODE )) && log_info "Local mode: no push, no PR, no context-update."
 
 # Main run: process one selection cycle. Called once, or repeatedly in watch mode.
 run_cycle() {
@@ -193,8 +200,12 @@ run_cycle() {
             continue
         fi
         if process_issue "$n"; then
-            state_mark_processed "$REPO_SLUG" "$n" "$LAST_PR_URL"
-            log_ok "Issue #$n → $LAST_PR_URL"
+            if (( LOCAL_MODE == 0 )); then
+                state_mark_processed "$REPO_SLUG" "$n" "$LAST_PR_URL"
+                log_ok "Issue #$n → $LAST_PR_URL"
+            else
+                log_ok "Issue #$n → committed locally on branch (not marked processed, no PR)"
+            fi
         else
             state_mark_error "$REPO_SLUG" "$n" "$LAST_ERROR"
             log_error "Issue #$n failed: $LAST_ERROR"
