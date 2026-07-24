@@ -3,6 +3,21 @@
 
 _gh() { gh --repo "${REPO_OWNER}/${REPO_NAME}" "$@"; }
 
+# Returns a JSON array of already-processed issue numbers for the current
+# repo (or [] if FORCE_RETRY is on or state is missing).
+_processed_ids_json() {
+    if (( ${FORCE_RETRY:-0} == 1 )); then
+        echo '[]'; return 0
+    fi
+    local file
+    file=$(_state_file "$REPO_SLUG")
+    if [[ -f $file ]]; then
+        jq '.processed | keys | map(tonumber)' "$file" 2>/dev/null || echo '[]'
+    else
+        echo '[]'
+    fi
+}
+
 # Select which issue numbers to process. Prints one issue number per line.
 # Args: MODE ARG
 #   oldest       -> newest 1
@@ -22,17 +37,26 @@ select_issues() {
             tr ',' '\n' <<<"$arg" | awk 'NF'
             ;;
         oldest)
+            local ex; ex=$(_processed_ids_json)
             _gh issue list --state open --json number,createdAt --limit 100 \
-                | jq -r 'sort_by(.createdAt) | .[0].number // empty'
+                | jq -r --argjson ex "$ex" '
+                    [ .[] | select(.number as $n | ($ex | index($n)) | not) ]
+                    | sort_by(.createdAt) | .[0].number // empty'
             ;;
         n-oldest)
             [[ -z $arg ]] && { log_error "--n-oldest requires a count"; return 1; }
+            local ex; ex=$(_processed_ids_json)
             _gh issue list --state open --json number,createdAt --limit 200 \
-                | jq -r --argjson n "$arg" 'sort_by(.createdAt) | .[0:$n] | .[].number'
+                | jq -r --argjson n "$arg" --argjson ex "$ex" '
+                    [ .[] | select(.number as $n2 | ($ex | index($n2)) | not) ]
+                    | sort_by(.createdAt) | .[0:$n] | .[].number'
             ;;
         all)
+            local ex; ex=$(_processed_ids_json)
             _gh issue list --state open --json number,createdAt --limit 500 \
-                | jq -r 'sort_by(.createdAt) | .[].number'
+                | jq -r --argjson ex "$ex" '
+                    [ .[] | select(.number as $n | ($ex | index($n)) | not) ]
+                    | sort_by(.createdAt) | .[].number'
             ;;
         *)
             log_error "Unknown selection mode: $mode"; return 1 ;;
