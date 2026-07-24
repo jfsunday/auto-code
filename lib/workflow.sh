@@ -31,19 +31,18 @@ process_issue() {
     fi
     log_info "Issue title: $ISSUE_TITLE"
 
-    # Auto-resume whenever ANY local branch matching auto/issue-N-* exists
-    # (title slug may have drifted; glob-match handles it). The --resume flag
-    # is kept for back-compat but does nothing extra.
+    # Auto-resume ONLY when the currently checked-out branch matches this
+    # issue's auto/issue-N-* pattern. Old branches that just weren't cleaned
+    # up don't count — they'd cause us to jump into finished work.
     local RESUME_MODE=0
-    local existing_branch=""
+    local active_branch=""
     if [[ -d "$REPO_PATH/.git" ]]; then
-        existing_branch=$(cd "$REPO_PATH" && git branch --list "auto/issue-${n}-*" 2>/dev/null \
-            | sed -E 's/^[* ]+//' | head -1)
+        active_branch=$(cd "$REPO_PATH" && git symbolic-ref --short HEAD 2>/dev/null)
     fi
-    if [[ -n $existing_branch ]]; then
-        WORK_BRANCH=$existing_branch
+    if [[ $active_branch =~ ^auto/issue-${n}- ]]; then
+        WORK_BRANCH=$active_branch
         RESUME_MODE=1
-        log_info "Found existing work branch $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
+        log_info "Currently on $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
     else
         local slug; slug=$(slugify "$ISSUE_TITLE")
         WORK_BRANCH="auto/issue-${n}-${slug}"

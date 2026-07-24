@@ -18,40 +18,44 @@ _processed_ids_json() {
     fi
 }
 
-# True (0) if a local branch matching auto/issue-<n>-* exists in the target repo.
-_has_work_branch() {
-    local n=$1
-    [[ -d "$REPO_PATH/.git" ]] || return 1
-    local out
-    out=$(cd "$REPO_PATH" && git branch --list "auto/issue-${n}-*" 2>/dev/null)
-    [[ -n $out ]]
+# Returns the issue number if HEAD is currently on an auto/issue-N-* branch,
+# empty otherwise. This is the ONLY signal for "hanging work" — old branches
+# that were already merged and just weren't cleaned up don't count.
+_active_work_issue() {
+    [[ -d "$REPO_PATH/.git" ]] || return 0
+    local br
+    br=$(cd "$REPO_PATH" && git symbolic-ref --short HEAD 2>/dev/null)
+    if [[ $br =~ ^auto/issue-([0-9]+)- ]]; then
+        echo "${BASH_REMATCH[1]}"
+    fi
 }
 
 # Returns eligible issue numbers, one per line, in this order:
-#   1. Issues with a local work-branch (they take priority — regardless of
-#      state.processed, because a dirty/half-done branch means work is unfinished)
-#   2. All other open issues that are NOT in state.processed (unless FORCE_RETRY),
-#      sorted by createdAt ascending.
-#
-# Reads REPO_OWNER/REPO_NAME/REPO_PATH and calls _gh internally.
+#   1. The issue whose auto/issue-N-* branch is currently checked out (if any),
+#      even if it appears in state.processed — the checkout is a strong signal
+#      that work is unfinished.
+#   2. Remaining open issues NOT in state.processed (unless FORCE_RETRY),
+#      oldest first.
 _list_eligible_issues() {
-    local raw ex
+    local raw ex active all_sorted
     raw=$(_gh issue list --state open --json number,createdAt --limit 500)
     ex=$(_processed_ids_json)
-    # Get ALL open issue numbers sorted oldest-first
-    local all_sorted
+    active=$(_active_work_issue)
     all_sorted=$(echo "$raw" | jq -r 'sort_by(.createdAt) | .[].number')
+
+    # 1. The active work-branch issue first (if it's still open)
+    if [[ -n $active ]] && grep -qx "$active" <<<"$all_sorted"; then
+        echo "$active"
+    fi
+
+    # 2. The rest, filtered by processed, excluding the one we just printed
     local n
-    local -a hanging=() eligible=()
     for n in $all_sorted; do
-        if _has_work_branch "$n"; then
-            hanging+=("$n")
-        elif ! echo "$ex" | jq -e --argjson n "$n" 'index($n)' >/dev/null 2>&1; then
-            eligible+=("$n")
+        [[ $n == "$active" ]] && continue
+        if ! echo "$ex" | jq -e --argjson n "$n" 'index($n)' >/dev/null 2>&1; then
+            echo "$n"
         fi
     done
-    (( ${#hanging[@]}  > 0 )) && printf '%s\n' "${hanging[@]}"
-    (( ${#eligible[@]} > 0 )) && printf '%s\n' "${eligible[@]}"
 }
 
 # Select which issue numbers to process. Prints one issue number per line.

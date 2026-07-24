@@ -205,10 +205,6 @@ run_cycle() {
 
     local n rc=0
     for n in "${issues[@]}"; do
-        if (( FORCE_RETRY == 0 )) && state_is_processed "$REPO_SLUG" "$n"; then
-            log_info "Issue #$n already processed (state). Skipping. Use --retry to force."
-            continue
-        fi
         if process_issue "$n"; then
             if (( LOCAL_MODE == 0 )); then
                 state_mark_processed "$REPO_SLUG" "$n" "$LAST_PR_URL"
