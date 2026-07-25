@@ -45,25 +45,32 @@ process_issue() {
         active_branch=$(cd "$REPO_PATH" && git symbolic-ref --short HEAD 2>/dev/null)
     fi
 
-    if (( ${TASK_MODE:-0} == 1 )); then
-        WORK_BRANCH="auto/${n}"   # $n is already "task-<slug>"
-        # Resume if branch exists (checked out or not — task ids are deterministic).
-        if [[ -d "$REPO_PATH/.git" ]] && \
-           (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$WORK_BRANCH" >/dev/null); then
-            RESUME_MODE=1
-            log_info "Task branch $WORK_BRANCH exists — auto-resuming (skipping init/plan/code)."
+    # Naming: explicit --branch wins. Multi-target runs append -N so branches don't collide.
+    if [[ -n ${CUSTOM_BRANCH_NAME:-} ]]; then
+        if (( ${MULTI_TARGETS:-0} == 1 )) && (( ${TASK_MODE:-0} == 0 )); then
+            WORK_BRANCH="${CUSTOM_BRANCH_NAME}-${n}"
+        else
+            WORK_BRANCH="$CUSTOM_BRANCH_NAME"
         fi
+    elif (( ${TASK_MODE:-0} == 1 )); then
+        WORK_BRANCH="auto/${n}"   # $n is "task-<slug>"
     elif [[ $active_branch =~ ^auto/issue-${n}- ]]; then
+        WORK_BRANCH=$active_branch
+    else
+        local slug; slug=$(slugify "$ISSUE_TITLE")
+        WORK_BRANCH="auto/issue-${n}-${slug}"
+    fi
+
+    # Auto-resume: branch already exists locally?
+    if [[ -d "$REPO_PATH/.git" ]] && \
+       (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$WORK_BRANCH" >/dev/null); then
+        RESUME_MODE=1
+        log_info "Branch $WORK_BRANCH exists — auto-resuming (skipping init/plan/code)."
+    elif [[ -n $active_branch && $active_branch =~ ^auto/issue-${n}- ]]; then
+        # Special case: user is on an auto branch matching this issue, adopt it
         WORK_BRANCH=$active_branch
         RESUME_MODE=1
         log_info "Currently on $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
-    else
-        local slug; slug=$(slugify "$ISSUE_TITLE")
-        if [[ -n ${CUSTOM_BRANCH_NAME:-} ]]; then
-            WORK_BRANCH="${CUSTOM_BRANCH_NAME}-${n}"
-        else
-            WORK_BRANCH="auto/issue-${n}-${slug}"
-        fi
     fi
     export WORK_BRANCH
 

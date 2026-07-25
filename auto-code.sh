@@ -81,6 +81,8 @@ Optional context sessions (auto-persisted per repo):
 Interactive:
   -i, --interactive     Ask for branch prefix, model, max-reviews, base-branch
                         before starting. Values apply to the whole run.
+  --branch <name>       Explicit branch name. With one issue/task: used as-is.
+                        With multiple issues: used as prefix (name-42, name-43).
 
 Task mode (no GitHub issues — works with any git remote):
   --task "<title>"      Describe the work directly instead of pulling an issue.
@@ -189,6 +191,7 @@ while (( $# )); do
         --stealth)            CLI_STEALTH_SET=1; CLI_STEALTH_VAL=1; shift ;;
         --no-stealth)         CLI_STEALTH_SET=1; CLI_STEALTH_VAL=0; shift ;;
         --interactive|-i)     INTERACTIVE=1; shift ;;
+        --branch)             CUSTOM_BRANCH_NAME=$2; shift 2 ;;
         --task)               TASK_MODE=1; TASK_TITLE=$2; shift 2 ;;
         --task-body)          TASK_BODY=$2; shift 2 ;;
         --task-body-file)     TASK_BODY_FILE=$2; shift 2 ;;
@@ -313,6 +316,8 @@ run_cycle() {
     fi
 
     local n rc=0
+    if (( ${#issues[@]} > 1 )); then MULTI_TARGETS=1; else MULTI_TARGETS=0; fi
+    export MULTI_TARGETS
     for n in "${issues[@]}"; do
         if process_issue "$n"; then
             if (( TASK_MODE == 1 )); then
