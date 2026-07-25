@@ -36,6 +36,7 @@ source "$LIB_DIR/workflow.sh"
 usage() {
     cat <<'EOF'
 auto-code <owner/repo> [options]
+auto-code add-issue <owner/repo> "<title>" [--body "<text>" | --body-file <path>]
 
 Turn GitHub issues into pull requests using Claude Code.
 
@@ -104,6 +105,46 @@ CLI_STEALTH_SET=0
 CLI_STEALTH_VAL=0
 RESET_OPTIONS=0
 INTERACTIVE=0
+
+# Sub-commands ------------------------------------------------------------
+if [[ ${1:-} == "add-issue" ]]; then
+    shift
+    REPO_SPEC=""
+    ISSUE_TITLE=""
+    ISSUE_BODY=""
+    ISSUE_BODY_FILE=""
+    while (( $# )); do
+        case $1 in
+            --body)      ISSUE_BODY=$2; shift 2 ;;
+            --body-file) ISSUE_BODY_FILE=$2; shift 2 ;;
+            -h|--help)
+                echo "auto-code add-issue <owner/repo> \"<title>\" [--body \"<text>\" | --body-file <path>]"
+                exit 0 ;;
+            -*) log_error "add-issue: unknown option: $1"; exit 2 ;;
+            *)
+                if [[ -z $REPO_SPEC ]]; then REPO_SPEC=$1
+                elif [[ -z $ISSUE_TITLE ]]; then ISSUE_TITLE=$1
+                else log_error "add-issue: unexpected arg: $1"; exit 2
+                fi
+                shift ;;
+        esac
+    done
+    [[ -z $REPO_SPEC || -z $ISSUE_TITLE ]] && { log_error "add-issue: need <owner/repo> and \"<title>\""; exit 2; }
+    parse_repo_spec "$REPO_SPEC" || exit 2
+    bot_auth_setup
+    _args=(--repo "$REPO_OWNER/$REPO_NAME" --title "$ISSUE_TITLE")
+    if [[ -n $ISSUE_BODY_FILE ]]; then
+        [[ -f $ISSUE_BODY_FILE ]] || { log_error "body file not found: $ISSUE_BODY_FILE"; exit 2; }
+        _args+=(--body-file "$ISSUE_BODY_FILE")
+    elif [[ -n $ISSUE_BODY ]]; then
+        _args+=(--body "$ISSUE_BODY")
+    else
+        _args+=(--body "")
+    fi
+    url=$(gh issue create "${_args[@]}") || { log_error "gh issue create failed"; exit 1; }
+    log_ok "Issue created: $url"
+    exit 0
+fi
 
 # Argument parsing --------------------------------------------------------
 if [[ $# -eq 0 ]]; then usage; exit 0; fi
