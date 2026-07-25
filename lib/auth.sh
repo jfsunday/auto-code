@@ -72,3 +72,14 @@ git_push_bot() {
         git push -u origin "$branch"
     fi
 }
+
+# Clone-URL picker. Bot-active → https+token; otherwise SSH (matches typical
+# user setup). Falls back to plain https if you'd rather force it (not used).
+git_clone_url() {
+    if [[ ${BOT_ACTIVE:-0} == 1 ]]; then
+        [[ -z ${GH_TOKEN:-} ]] && { echo "BOT_ACTIVE but GH_TOKEN empty" >&2; return 1; }
+        echo "https://x-access-token:${GH_TOKEN}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
+    else
+        echo "git@github.com:${REPO_OWNER}/${REPO_NAME}.git"
+    fi
+}

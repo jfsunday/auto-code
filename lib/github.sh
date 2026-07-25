@@ -117,12 +117,14 @@ slugify() {
 }
 
 # Clone repo into REPO_PATH if missing, else fetch + reset to BASE_BRANCH.
-# Requires: REPO_OWNER, REPO_NAME, REPO_PATH, BASE_BRANCH.
+# Pure git — no `gh` CLI dependency. Uses git_clone_url() from lib/auth.sh
+# to pick the right URL (bot https+token or user SSH).
 gh_clone_if_missing() {
     if [[ ! -d $REPO_PATH/.git ]]; then
+        local url; url=$(git_clone_url) || return 1
         log_info "Cloning ${REPO_OWNER}/${REPO_NAME} into $REPO_PATH"
-        if ! gh repo clone "${REPO_OWNER}/${REPO_NAME}" "$REPO_PATH" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"; then
-            log_error "gh repo clone failed"
+        if ! git clone "$url" "$REPO_PATH" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"; then
+            log_error "git clone failed"
             return 1
         fi
     else
@@ -130,7 +132,6 @@ gh_clone_if_missing() {
         (
             cd "$REPO_PATH" || exit 1
             git fetch origin --prune
-            # Refuse if working tree is dirty (safety)
             if ! git diff --quiet || ! git diff --cached --quiet; then
                 echo "Working tree dirty in $REPO_PATH — refusing to touch" >&2
                 exit 1
