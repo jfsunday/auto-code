@@ -40,6 +40,11 @@ claude_run() {
         --add-dir "$REPO_PATH"
         --model "$CLAUDE_MODEL"
     )
+    # In stealth mode Claude needs write-access to the external context dir
+    # (that's where CLAUDE.md + issue-N-*.md live).
+    if (( ${SETTING_STEALTH:-0} == 1 )) && [[ -n ${AUTOCODING_REPOS_CTX_DIR:-} ]]; then
+        claude_cmd+=(--add-dir "$AUTOCODING_REPOS_CTX_DIR/$REPO_SLUG")
+    fi
     if [[ -n ${CLAUDE_MAX_BUDGET_USD:-} ]]; then
         claude_cmd+=(--max-budget-usd "$CLAUDE_MAX_BUDGET_USD")
     fi

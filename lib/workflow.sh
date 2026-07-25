@@ -45,7 +45,11 @@ process_issue() {
         log_info "Currently on $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
     else
         local slug; slug=$(slugify "$ISSUE_TITLE")
-        WORK_BRANCH="auto/issue-${n}-${slug}"
+        if [[ -n ${CUSTOM_BRANCH_NAME:-} ]]; then
+            WORK_BRANCH="${CUSTOM_BRANCH_NAME}-${n}"
+        else
+            WORK_BRANCH="auto/issue-${n}-${slug}"
+        fi
     fi
     export WORK_BRANCH
 
@@ -53,12 +57,19 @@ process_issue() {
     local sess_dir="$AUTOCODING_LOG_DIR/$REPO_SLUG/issue-${n}"
     mkdir -p "$sess_dir"
 
-    # Paths for artefacts that live IN the repo (versioned with the branch)
-    local ctx_dir_rel=".claude/context"
-    local ctx_dir="$REPO_PATH/$ctx_dir_rel"
+    # Paths for context artefacts. In stealth mode they live entirely outside
+    # the repo (never committed). Otherwise they live at $REPO_PATH/.claude/context/
+    # and end up as part of the branch/PR.
+    local ctx_dir
+    if (( ${SETTING_STEALTH:-0} == 1 )); then
+        ctx_dir="$AUTOCODING_REPOS_CTX_DIR/$REPO_SLUG"
+    else
+        ctx_dir="$REPO_PATH/.claude/context"
+    fi
     PLAN_MD_PATH="$ctx_dir/issue-${n}-plan.md"
     SUMMARY_MD_PATH="$ctx_dir/issue-${n}-summary.md"
-    export PLAN_MD_PATH SUMMARY_MD_PATH
+    CLAUDE_MD_PATH=$(_claude_md_path)
+    export PLAN_MD_PATH SUMMARY_MD_PATH CLAUDE_MD_PATH CTX_DIR="$ctx_dir"
 
     if (( RESUME_MODE == 0 )); then
         # --- Fresh path: sync repo, ensure CLAUDE.md, new branch, plan+code ---

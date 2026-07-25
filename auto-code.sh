@@ -28,6 +28,8 @@ source "$LIB_DIR/claude.sh"
 source "$LIB_DIR/context.sh"
 # shellcheck source=lib/usage.sh
 source "$LIB_DIR/usage.sh"
+# shellcheck source=lib/wizard.sh
+source "$LIB_DIR/wizard.sh"
 # shellcheck source=lib/workflow.sh
 source "$LIB_DIR/workflow.sh"
 
@@ -69,7 +71,15 @@ Optional context sessions (auto-persisted per repo):
   --init                Re-enable init (overrides persisted --no-init)
   --no-context-update   Skip post-PR context-update session
   --context-update      Re-enable context-update
+  --stealth             Repo stays clean: CLAUDE.md and .claude/context/ files
+                        live under ~/.config/autocoding/repos/<slug>/, never
+                        committed. Only real code changes end up in the PR.
+  --no-stealth          Re-enable committing context artifacts to the repo
   --reset-options       Wipe persisted per-repo settings back to defaults
+
+Interactive:
+  -i, --interactive     Ask for branch prefix, model, max-reviews, base-branch
+                        before starting. Values apply to the whole run.
 
   -h, --help            Show this help
 EOF
@@ -90,7 +100,10 @@ CLI_INIT_SET=0
 CLI_INIT_VAL=1
 CLI_CTX_SET=0
 CLI_CTX_VAL=1
+CLI_STEALTH_SET=0
+CLI_STEALTH_VAL=0
 RESET_OPTIONS=0
+INTERACTIVE=0
 
 # Argument parsing --------------------------------------------------------
 if [[ $# -eq 0 ]]; then usage; exit 0; fi
@@ -118,6 +131,9 @@ while (( $# )); do
         --init)               CLI_INIT_SET=1; CLI_INIT_VAL=1; shift ;;
         --no-context-update)  CLI_CTX_SET=1;  CLI_CTX_VAL=0;  shift ;;
         --context-update)     CLI_CTX_SET=1;  CLI_CTX_VAL=1;  shift ;;
+        --stealth)            CLI_STEALTH_SET=1; CLI_STEALTH_VAL=1; shift ;;
+        --no-stealth)         CLI_STEALTH_SET=1; CLI_STEALTH_VAL=0; shift ;;
+        --interactive|-i)     INTERACTIVE=1; shift ;;
         --reset-options)      RESET_OPTIONS=1; shift ;;
         --) shift; break ;;
         -*) log_error "Unknown option: $1"; usage; exit 2 ;;
@@ -161,8 +177,10 @@ fi
 
 SETTING_INIT=1
 SETTING_CONTEXT_UPDATE=1
+SETTING_STEALTH=0
 _val=$(state_get_setting "$REPO_SLUG" init);           [[ -n $_val ]] && SETTING_INIT=$_val
 _val=$(state_get_setting "$REPO_SLUG" context_update); [[ -n $_val ]] && SETTING_CONTEXT_UPDATE=$_val
+_val=$(state_get_setting "$REPO_SLUG" stealth);        [[ -n $_val ]] && SETTING_STEALTH=$_val
 
 if (( CLI_INIT_SET )); then
     SETTING_INIT=$CLI_INIT_VAL
@@ -172,13 +190,23 @@ if (( CLI_CTX_SET )); then
     SETTING_CONTEXT_UPDATE=$CLI_CTX_VAL
     state_set_setting "$REPO_SLUG" context_update "$CLI_CTX_VAL"
 fi
+if (( CLI_STEALTH_SET )); then
+    SETTING_STEALTH=$CLI_STEALTH_VAL
+    state_set_setting "$REPO_SLUG" stealth "$CLI_STEALTH_VAL"
+fi
 
-log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE"
+log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH"
+
+if (( INTERACTIVE )); then
+    run_wizard
+fi
 
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
 export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE RESUME CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
-export SETTING_INIT SETTING_CONTEXT_UPDATE AUTOCODING_GH_USER AUTOCODING_GIT_NAME AUTOCODING_GIT_EMAIL BOT_ACTIVE
+export SETTING_INIT SETTING_CONTEXT_UPDATE SETTING_STEALTH INTERACTIVE
+export AUTOCODING_GH_USER AUTOCODING_GIT_NAME AUTOCODING_GIT_EMAIL BOT_ACTIVE
+export AUTOCODING_REPOS_CTX_DIR CUSTOM_BRANCH_NAME
 
 (( LOCAL_MODE )) && log_info "Local mode: no push, no PR, no context-update."
 

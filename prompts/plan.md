@@ -12,7 +12,7 @@ Body:
 ${ISSUE_BODY}
 
 Your task:
-1. Read ${REPO_PATH}/CLAUDE.md for project context.
+1. Read ${CLAUDE_MD_PATH} for project context.
 2. Read whatever files in ${REPO_PATH} are relevant to this issue.
 3. Write a concise plan to: ${PLAN_MD_PATH}
 

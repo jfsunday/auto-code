@@ -13,7 +13,7 @@ ${ISSUE_BODY}
 
 Your task:
 1. Read any existing files in ${REPO_PATH} to understand what is already there (probably just a README).
-2. Write a file at ${REPO_PATH}/CLAUDE.md containing the project context that future automated coding sessions should use as ground truth. Include, where inferable:
+2. Write a file at ${CLAUDE_MD_PATH} containing the project context that future automated coding sessions should use as ground truth. Include, where inferable:
    - One-paragraph project purpose
    - Target tech stack / language (if implied by the issue)
    - Directory layout (planned)

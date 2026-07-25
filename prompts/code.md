@@ -14,7 +14,7 @@ ${ISSUE_BODY}
 The plan for this change is at: ${PLAN_MD_PATH}
 
 Your task:
-1. Read ${REPO_PATH}/CLAUDE.md for project context.
+1. Read ${CLAUDE_MD_PATH} for project context.
 2. Read ${PLAN_MD_PATH} and follow it.
 3. Implement the change. Create/edit files as needed inside ${REPO_PATH}.
 4. If tests are part of the plan, add them.

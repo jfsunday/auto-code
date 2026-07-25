@@ -13,7 +13,7 @@ ${ISSUE_BODY}
 Plan file (already implemented): ${PLAN_MD_PATH}
 
 Your task:
-1. Read ${REPO_PATH}/CLAUDE.md, ${PLAN_MD_PATH}, and the issue body above.
+1. Read ${CLAUDE_MD_PATH}, ${PLAN_MD_PATH}, and the issue body above.
 2. Inspect the change: run `git log -1 --stat` and `git diff HEAD~1..HEAD` inside ${REPO_PATH} to see what was just implemented (there may be multiple review-fix commits already; look at the whole diff vs the base branch: `git diff ${BASE_BRANCH}...HEAD`).
 3. Also read the resulting files to check for bugs a diff wouldn't reveal (missing edge cases, broken imports, wrong assumptions).
 4. If the repo has runnable tests, try to run them and note the result.

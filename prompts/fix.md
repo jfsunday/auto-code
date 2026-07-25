@@ -12,7 +12,7 @@ Review with findings: ${REVIEW_MD_PATH}
 
 Your task:
 1. Read ${REVIEW_MD_PATH} — especially the "Bugs / gaps" and "Suggested fixes" sections.
-2. Read ${REPO_PATH}/CLAUDE.md and ${PLAN_MD_PATH} for context.
+2. Read ${CLAUDE_MD_PATH} and ${PLAN_MD_PATH} for context.
 3. Apply the fixes. Edit files inside ${REPO_PATH}.
 4. Do not introduce new features not covered by the original issue or plan.
 

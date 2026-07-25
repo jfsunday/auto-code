@@ -9,6 +9,7 @@ set -o pipefail
 : "${AUTOCODING_HOME:=$HOME/.config/autocoding}"
 : "${AUTOCODING_STATE_DIR:=$AUTOCODING_HOME/state}"
 : "${AUTOCODING_LOG_DIR:=$AUTOCODING_HOME/logs}"
+: "${AUTOCODING_REPOS_CTX_DIR:=$AUTOCODING_HOME/repos}"
 : "${AUTOCODING_CONFIG_FILE:=$AUTOCODING_HOME/config.env}"
 
 # Built-in defaults
@@ -35,8 +36,8 @@ if [[ -r "$AUTOCODING_CONFIG_FILE" ]]; then
     source "$AUTOCODING_CONFIG_FILE"
 fi
 
-# Ensure state/log dirs exist (idempotent)
-mkdir -p "$AUTOCODING_STATE_DIR" "$AUTOCODING_LOG_DIR"
+# Ensure state/log/repo-ctx dirs exist (idempotent)
+mkdir -p "$AUTOCODING_STATE_DIR" "$AUTOCODING_LOG_DIR" "$AUTOCODING_REPOS_CTX_DIR"
 
 # Parse a duration like "30s", "5m", "1h" into seconds. Prints seconds on stdout.
 parse_duration() {

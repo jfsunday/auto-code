@@ -1,21 +1,43 @@
 #!/usr/bin/env bash
-# CLAUDE.md init/update in the target repo.
+# CLAUDE.md init/update. Location depends on SETTING_STEALTH:
+#   - stealth OFF: $REPO_PATH/CLAUDE.md, committed to $BASE_BRANCH (default)
+#   - stealth ON:  $AUTOCODING_REPOS_CTX_DIR/$REPO_SLUG/CLAUDE.md, never committed.
+#     If a hand-curated CLAUDE.md already exists in the repo it is preferred
+#     as read-only context and NOT touched.
 
-# Ensures $REPO_PATH/CLAUDE.md exists. If missing, runs the project-init prompt,
-# then commits the new file directly to $BASE_BRANCH.
-# Requires: gh_issue_get already ran (ISSUE_* set).
+# Returns the path to the CLAUDE.md the script should treat as authoritative
+# for this run, or empty if none exists yet and none should be created.
+_claude_md_path() {
+    if (( ${SETTING_STEALTH:-0} == 1 )); then
+        # Prefer an existing in-repo CLAUDE.md as read-only context
+        if [[ -f "$REPO_PATH/CLAUDE.md" ]]; then
+            echo "$REPO_PATH/CLAUDE.md"
+            return 0
+        fi
+        # Otherwise external
+        echo "$AUTOCODING_REPOS_CTX_DIR/$REPO_SLUG/CLAUDE.md"
+    else
+        echo "$REPO_PATH/CLAUDE.md"
+    fi
+}
+
 ensure_claude_md() {
-    local claude_md="$REPO_PATH/CLAUDE.md"
+    local claude_md; claude_md=$(_claude_md_path)
     if [[ -f $claude_md ]]; then
-        log_info "CLAUDE.md already present."
+        log_info "CLAUDE.md present at $claude_md"
         return 0
     fi
     if (( ${SETTING_INIT:-1} == 0 )); then
-        log_info "CLAUDE.md missing but init disabled for this repo — running without project context."
+        log_info "CLAUDE.md missing but init disabled — running without project context."
         return 0
     fi
 
-    log_info "CLAUDE.md missing — running project-init session."
+    log_info "CLAUDE.md missing — running project-init session (target: $claude_md)"
+    mkdir -p "$(dirname "$claude_md")"
+    # Override the path Claude should write to (prompt uses ${REPO_PATH}/CLAUDE.md via envsubst;
+    # we override that expectation by exporting a specific target).
+    export CLAUDE_MD_PATH="$claude_md"
+
     local out_dir="$AUTOCODING_LOG_DIR/$REPO_SLUG/issue-${ISSUE_NUM}"
     if ! claude_run "$PROMPTS_DIR/project-init.md" "$out_dir" "init"; then
         LAST_ERROR="project-init session failed"
@@ -23,8 +45,13 @@ ensure_claude_md() {
     fi
     _record_last_session "init"
     if [[ ! -f $claude_md ]]; then
-        LAST_ERROR="project-init did not create CLAUDE.md"
+        LAST_ERROR="project-init did not create $claude_md"
         return 1
+    fi
+
+    if (( ${SETTING_STEALTH:-0} == 1 )); then
+        log_ok "CLAUDE.md written to external context dir (not committed)."
+        return 0
     fi
 
     (
@@ -41,13 +68,14 @@ ensure_claude_md() {
     log_ok "CLAUDE.md initialized and pushed to $BASE_BRANCH."
 }
 
-# Runs the context-update prompt after a successful PR; if Claude signals
-# STATUS: UPDATED, commits and pushes the CLAUDE.md change to $BASE_BRANCH.
 update_claude_md() {
     if (( ${SETTING_CONTEXT_UPDATE:-1} == 0 )); then
         log_info "context-update skipped (disabled for this repo)."
         return 0
     fi
+    local claude_md; claude_md=$(_claude_md_path)
+    export CLAUDE_MD_PATH="$claude_md"
+
     local out_dir="$AUTOCODING_LOG_DIR/$REPO_SLUG/issue-${ISSUE_NUM}"
     log_info "Running context-update session (post-PR)."
     if ! claude_run "$PROMPTS_DIR/context-update.md" "$out_dir" "context-update"; then
@@ -61,6 +89,12 @@ update_claude_md() {
         log_info "No CLAUDE.md update needed."
         return 0
     fi
+
+    if (( ${SETTING_STEALTH:-0} == 1 )); then
+        log_ok "CLAUDE.md updated in external context dir (not committed)."
+        return 0
+    fi
+
     local tmp; tmp=$(mktemp)
     cp "$REPO_PATH/CLAUDE.md" "$tmp"
     (
