@@ -12,7 +12,8 @@ _processed_ids_json() {
     local file
     file=$(_state_file "$REPO_SLUG")
     if [[ -f $file ]]; then
-        jq '.processed | keys | map(tonumber)' "$file" 2>/dev/null || echo '[]'
+        # Only numeric keys matter for issue-list filtering; task-<slug> keys are ignored.
+        jq '.processed | keys | map(select(test("^[0-9]+$"))) | map(tonumber)' "$file" 2>/dev/null || echo '[]'
     else
         echo '[]'
     fi

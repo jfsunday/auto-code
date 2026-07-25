@@ -23,23 +23,37 @@ process_issue() {
     LAST_ERROR=""
 
     set_log_file_for_issue "$n"
-    log_info "Processing issue #$n on ${REPO_OWNER}/${REPO_NAME}"
 
-    if ! gh_issue_get "$n"; then
-        LAST_ERROR="fetching issue #$n failed"
-        return 1
+    if (( ${TASK_MODE:-0} == 1 )); then
+        log_info "Processing task '$ISSUE_TITLE' on ${REPO_OWNER}/${REPO_NAME}"
+        WORK_REF="task '${ISSUE_TITLE}'"
+    else
+        log_info "Processing issue #$n on ${REPO_OWNER}/${REPO_NAME}"
+        if ! gh_issue_get "$n"; then
+            LAST_ERROR="fetching issue #$n failed"
+            return 1
+        fi
+        log_info "Issue title: $ISSUE_TITLE"
+        WORK_REF="issue #${n}"
     fi
-    log_info "Issue title: $ISSUE_TITLE"
+    export WORK_REF
 
-    # Auto-resume ONLY when the currently checked-out branch matches this
-    # issue's auto/issue-N-* pattern. Old branches that just weren't cleaned
-    # up don't count — they'd cause us to jump into finished work.
+    # Determine work branch name and detect resume opportunity.
     local RESUME_MODE=0
     local active_branch=""
     if [[ -d "$REPO_PATH/.git" ]]; then
         active_branch=$(cd "$REPO_PATH" && git symbolic-ref --short HEAD 2>/dev/null)
     fi
-    if [[ $active_branch =~ ^auto/issue-${n}- ]]; then
+
+    if (( ${TASK_MODE:-0} == 1 )); then
+        WORK_BRANCH="auto/${n}"   # $n is already "task-<slug>"
+        # Resume if branch exists (checked out or not — task ids are deterministic).
+        if [[ -d "$REPO_PATH/.git" ]] && \
+           (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$WORK_BRANCH" >/dev/null); then
+            RESUME_MODE=1
+            log_info "Task branch $WORK_BRANCH exists — auto-resuming (skipping init/plan/code)."
+        fi
+    elif [[ $active_branch =~ ^auto/issue-${n}- ]]; then
         WORK_BRANCH=$active_branch
         RESUME_MODE=1
         log_info "Currently on $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
@@ -123,7 +137,7 @@ process_issue() {
         (
             cd "$REPO_PATH" || exit 1
             git add -A
-            git_commit "Implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
+            git_commit "Implement ${WORK_REF}: ${ISSUE_TITLE}" >/dev/null
         ) || { LAST_ERROR="initial commit failed"; return 1; }
     else
         # --- Resume path: checkout existing branch, commit outstanding, proceed ---
@@ -145,7 +159,7 @@ process_issue() {
             (
                 cd "$REPO_PATH" || exit 1
                 git add -A
-                git_commit "Resume: implement issue #${n}: ${ISSUE_TITLE}" >/dev/null
+                git_commit "Resume: implement ${WORK_REF}: ${ISSUE_TITLE}" >/dev/null
             ) || { LAST_ERROR="resume commit failed"; return 1; }
         else
             local commits_ahead
@@ -178,7 +192,7 @@ process_issue() {
         esac
 
         # Commit whatever the review session may have written (review MD)
-        (cd "$REPO_PATH" && git add -A && git diff --cached --quiet || git_commit "Add review $i for issue #${n}" >/dev/null) || true
+        (cd "$REPO_PATH" && git add -A && git diff --cached --quiet || git_commit "Add review $i for ${WORK_REF}" >/dev/null) || true
 
         if [[ $last_status == NEEDS_FIX ]] && (( i < MAX_REVIEWS )); then
             if ! claude_run "$PROMPTS_DIR/fix.md" "$sess_dir" "fix-${i}"; then
@@ -190,7 +204,7 @@ process_issue() {
                 cd "$REPO_PATH" || exit 1
                 if ! git diff --quiet || ! git diff --cached --quiet; then
                     git add -A
-                    git_commit "Review fix ${i} for issue #${n}" >/dev/null
+                    git_commit "Review fix ${i} for ${WORK_REF}" >/dev/null
                 else
                     echo "fix session $i produced no diff" >&2
                 fi
@@ -200,7 +214,7 @@ process_issue() {
 
     # ---- Summary + PR body ----
     _build_pr_body "$n" "$last_status" "$SUMMARY_MD_PATH"
-    (cd "$REPO_PATH" && git add -A && (git diff --cached --quiet || git_commit "Add PR summary for issue #${n}" >/dev/null)) || true
+    (cd "$REPO_PATH" && git add -A && (git diff --cached --quiet || git_commit "Add summary for ${WORK_REF}" >/dev/null)) || true
 
     if (( ${LOCAL_MODE:-0} == 1 )); then
         LAST_PR_URL="[local:${WORK_BRANCH}]"
@@ -210,26 +224,31 @@ process_issue() {
         return 0
     fi
 
-    # ---- Push + PR ----
+    # ---- Push ----
     if ! (cd "$REPO_PATH" && git_push_bot "$WORK_BRANCH" 2>&1 | tee -a "${LOG_FILE:-/dev/null}"); then
         LAST_ERROR="git push failed"
         return 1
     fi
 
-    local pr_title
-    if [[ $last_status == OK ]]; then
-        pr_title="Issue #${n}: ${ISSUE_TITLE}"
+    if (( ${TASK_MODE:-0} == 1 )); then
+        LAST_PR_URL="branch:${WORK_BRANCH} (open MR/PR manually)"
+        log_ok "Task branch pushed. Create MR/PR yourself on your forge."
     else
-        pr_title="[needs review] Issue #${n}: ${ISSUE_TITLE}"
-    fi
-    if ! gh_pr_create "$pr_title" "$SUMMARY_MD_PATH"; then
-        LAST_ERROR="PR creation failed"
-        return 1
-    fi
-    log_ok "PR opened: $LAST_PR_URL"
+        local pr_title
+        if [[ $last_status == OK ]]; then
+            pr_title="Issue #${n}: ${ISSUE_TITLE}"
+        else
+            pr_title="[needs review] Issue #${n}: ${ISSUE_TITLE}"
+        fi
+        if ! gh_pr_create "$pr_title" "$SUMMARY_MD_PATH"; then
+            LAST_ERROR="PR creation failed"
+            return 1
+        fi
+        log_ok "PR opened: $LAST_PR_URL"
 
-    # ---- Post-PR: update CLAUDE.md if warranted ----
-    update_claude_md || true
+        # ---- Post-PR: update CLAUDE.md if warranted ----
+        update_claude_md || true
+    fi
 
     # ---- Finalize usage & log summary ----
     state_finalize_usage "$REPO_SLUG" "$n"
@@ -242,7 +261,11 @@ process_issue() {
 _build_pr_body() {
     local n=$1 status=$2 out=$3
     {
-        echo "Closes #${n}"
+        if (( ${TASK_MODE:-0} == 1 )); then
+            echo "Task: ${ISSUE_TITLE}"
+        else
+            echo "Closes #${n}"
+        fi
         echo
         echo "Automated via auto-code."
         echo

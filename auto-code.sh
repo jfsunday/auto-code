@@ -82,6 +82,15 @@ Interactive:
   -i, --interactive     Ask for branch prefix, model, max-reviews, base-branch
                         before starting. Values apply to the whole run.
 
+Task mode (no GitHub issues — works with any git remote):
+  --task "<title>"      Describe the work directly instead of pulling an issue.
+                        Skips gh_issue_get + gh_pr_create. Pushes the branch;
+                        you create MR/PR yourself on GitLab/Gitea/etc.
+  --task-body "<text>"  Optional body text for the task
+  --task-body-file <p>  Read body from file
+  --task-id <slug>      Override branch slug (default: from title). Reusing the
+                        same id auto-resumes the existing task branch.
+
   -h, --help            Show this help
 EOF
 }
@@ -105,6 +114,11 @@ CLI_STEALTH_SET=0
 CLI_STEALTH_VAL=0
 RESET_OPTIONS=0
 INTERACTIVE=0
+TASK_MODE=0
+TASK_TITLE=""
+TASK_BODY=""
+TASK_BODY_FILE=""
+TASK_ID=""
 
 # Sub-commands ------------------------------------------------------------
 if [[ ${1:-} == "add-issue" ]]; then
@@ -175,6 +189,10 @@ while (( $# )); do
         --stealth)            CLI_STEALTH_SET=1; CLI_STEALTH_VAL=1; shift ;;
         --no-stealth)         CLI_STEALTH_SET=1; CLI_STEALTH_VAL=0; shift ;;
         --interactive|-i)     INTERACTIVE=1; shift ;;
+        --task)               TASK_MODE=1; TASK_TITLE=$2; shift 2 ;;
+        --task-body)          TASK_BODY=$2; shift 2 ;;
+        --task-body-file)     TASK_BODY_FILE=$2; shift 2 ;;
+        --task-id)            TASK_ID=$2; shift 2 ;;
         --reset-options)      RESET_OPTIONS=1; shift ;;
         --) shift; break ;;
         -*) log_error "Unknown option: $1"; usage; exit 2 ;;
@@ -204,6 +222,23 @@ fi
 
 parse_repo_spec "$REPO_SPEC" || exit 2
 mkdir -p "$REPOS_DIR"
+
+# --task validation and derived vars (must run after parse_repo_spec so slugify works)
+if (( TASK_MODE )); then
+    [[ -z $TASK_TITLE ]] && { log_error "--task requires a title"; exit 2; }
+    if [[ -n $TASK_BODY_FILE ]]; then
+        [[ -f $TASK_BODY_FILE ]] || { log_error "task body file not found: $TASK_BODY_FILE"; exit 2; }
+        TASK_BODY=$(cat "$TASK_BODY_FILE")
+    fi
+    [[ -z $TASK_ID ]] && TASK_ID=$(slugify "$TASK_TITLE")
+    # Populate the ISSUE_* variables that the rest of the pipeline expects.
+    ISSUE_NUM="task-${TASK_ID}"
+    ISSUE_TITLE=$TASK_TITLE
+    ISSUE_BODY=$TASK_BODY
+    ISSUE_URL=""
+    ISSUE_LABELS=""
+    export TASK_MODE TASK_ID ISSUE_NUM ISSUE_TITLE ISSUE_BODY ISSUE_URL ISSUE_LABELS
+fi
 
 # Activate bot identity if configured. Fails hard on misconfig.
 bot_auth_setup
@@ -258,24 +293,31 @@ run_cycle() {
     # Ensure state file exists
     state_ensure "$REPO_SLUG"
 
-    # Resolve issue list
+    # Resolve target list. In --task mode we skip GitHub entirely.
     local -a issues
-    if ! mapfile -t issues < <(select_issues "$SELECTION_MODE" "$SELECTION_ARG"); then
-        log_error "Failed to select issues."
-        return 1
-    fi
+    if (( TASK_MODE )); then
+        issues=("$ISSUE_NUM")
+        log_info "Task mode: $TASK_TITLE (id=$TASK_ID)"
+    else
+        if ! mapfile -t issues < <(select_issues "$SELECTION_MODE" "$SELECTION_ARG"); then
+            log_error "Failed to select issues."
+            return 1
+        fi
 
-    if [[ ${#issues[@]} -eq 0 ]]; then
-        log_info "No matching open issues to process."
-        return 0
-    fi
+        if [[ ${#issues[@]} -eq 0 ]]; then
+            log_info "No matching open issues to process."
+            return 0
+        fi
 
-    log_info "Will process ${#issues[@]} issue(s): ${issues[*]}"
+        log_info "Will process ${#issues[@]} issue(s): ${issues[*]}"
+    fi
 
     local n rc=0
     for n in "${issues[@]}"; do
         if process_issue "$n"; then
-            if (( LOCAL_MODE == 0 )); then
+            if (( TASK_MODE == 1 )); then
+                log_ok "Task '$TASK_TITLE' → $LAST_PR_URL"
+            elif (( LOCAL_MODE == 0 )); then
                 state_mark_processed "$REPO_SLUG" "$n" "$LAST_PR_URL"
                 log_ok "Issue #$n → $LAST_PR_URL"
             else
@@ -283,7 +325,11 @@ run_cycle() {
             fi
         else
             state_mark_error "$REPO_SLUG" "$n" "$LAST_ERROR"
-            log_error "Issue #$n failed: $LAST_ERROR"
+            if (( TASK_MODE == 1 )); then
+                log_error "Task '$TASK_TITLE' failed: $LAST_ERROR"
+            else
+                log_error "Issue #$n failed: $LAST_ERROR"
+            fi
             rc=1
         fi
     done
