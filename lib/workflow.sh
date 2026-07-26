@@ -263,6 +263,13 @@ process_issue() {
         fi
         log_ok "PR opened: $LAST_PR_URL"
 
+        # ---- Optional: auto-merge and sync base ----
+        if (( ${SETTING_AUTO_MERGE:-0} == 1 )); then
+            if ! gh_pr_merge_now "$LAST_PR_URL"; then
+                log_warn "Auto-merge failed — PR left open for manual review."
+            fi
+        fi
+
         # ---- Post-PR: update CLAUDE.md if warranted ----
         update_claude_md || true
     fi

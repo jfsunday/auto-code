@@ -146,6 +146,36 @@ gh_clone_if_missing() {
 # Create a PR from current branch. Args: TITLE BODY_FILE_ABS
 # Runs inside REPO_PATH so gh picks up the current branch. Body file must be absolute.
 # Sets LAST_PR_URL.
+# Merge a PR immediately and pull the updated base branch locally so the next
+# issue starts from an up-to-date base (prevents parallel-branch conflicts).
+# Args: PR_URL. Strategy from $AUTO_MERGE_STRATEGY (merge/squash/rebase).
+gh_pr_merge_now() {
+    local pr_url=$1 strategy=${AUTO_MERGE_STRATEGY:-merge} flag
+    case $strategy in
+        merge)  flag="--merge" ;;
+        squash) flag="--squash" ;;
+        rebase) flag="--rebase" ;;
+        *) log_error "Unknown --auto-merge-strategy: $strategy"; return 1 ;;
+    esac
+    log_info "Auto-merging $pr_url with $strategy..."
+    local out
+    if ! out=$(gh pr merge "$pr_url" $flag --delete-branch 2>&1); then
+        log_error "gh pr merge failed: $out"
+        return 1
+    fi
+    log_ok "PR merged and remote branch deleted."
+    # Pull the updated base into the local repo so the next issue branches from it.
+    (
+        cd "$REPO_PATH" || exit 1
+        git fetch origin --prune 2>&1 | tail -3
+        git checkout "$BASE_BRANCH" >/dev/null 2>&1 || true
+        git pull --ff-only origin "$BASE_BRANCH" 2>&1 | tail -3
+        # Local work branch is stale now; remove it
+        git branch -D "$WORK_BRANCH" 2>/dev/null || true
+    ) || log_warn "Local base sync after merge had issues (non-fatal)."
+    log_ok "Local $BASE_BRANCH is up-to-date."
+}
+
 gh_pr_create() {
     local title=$1 body_file=$2 out
     # Pass --head explicitly. Without this, gh looks up the current branch's

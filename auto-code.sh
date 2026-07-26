@@ -76,6 +76,12 @@ Optional context sessions (auto-persisted per repo):
                         live under ~/.config/autocoding/repos/<slug>/, never
                         committed. Only real code changes end up in the PR.
   --no-stealth          Re-enable committing context artifacts to the repo
+  --auto-merge          Merge the PR immediately after creating it. Pulls the
+                        updated base branch locally so the next issue starts
+                        from up-to-date code (avoids serial-phase conflicts).
+                        Skipped in --local mode.
+  --no-auto-merge       Disable auto-merge (default)
+  --auto-merge-strategy Merge strategy: merge (default) | squash | rebase
   --reset-options       Wipe persisted per-repo settings back to defaults
 
 Interactive:
@@ -115,6 +121,9 @@ CLI_CTX_VAL=1
 CLI_STEALTH_SET=0
 CLI_STEALTH_VAL=0
 CLI_BASE_SET=0
+CLI_AM_SET=0
+CLI_AM_VAL=0
+AUTO_MERGE_STRATEGY="merge"
 RESET_OPTIONS=0
 INTERACTIVE=0
 TASK_MODE=0
@@ -191,6 +200,9 @@ while (( $# )); do
         --context-update)     CLI_CTX_SET=1;  CLI_CTX_VAL=1;  shift ;;
         --stealth)            CLI_STEALTH_SET=1; CLI_STEALTH_VAL=1; shift ;;
         --no-stealth)         CLI_STEALTH_SET=1; CLI_STEALTH_VAL=0; shift ;;
+        --auto-merge)         CLI_AM_SET=1; CLI_AM_VAL=1; shift ;;
+        --no-auto-merge)      CLI_AM_SET=1; CLI_AM_VAL=0; shift ;;
+        --auto-merge-strategy) AUTO_MERGE_STRATEGY=$2; shift 2 ;;
         --interactive|-i)     INTERACTIVE=1; shift ;;
         --branch)             CUSTOM_BRANCH_NAME=$2; shift 2 ;;
         --task)               TASK_MODE=1; TASK_TITLE=$2; shift 2 ;;
@@ -258,9 +270,11 @@ fi
 SETTING_INIT=1
 SETTING_CONTEXT_UPDATE=1
 SETTING_STEALTH=0
+SETTING_AUTO_MERGE=0
 _val=$(state_get_setting "$REPO_SLUG" init);           [[ -n $_val ]] && SETTING_INIT=$_val
 _val=$(state_get_setting "$REPO_SLUG" context_update); [[ -n $_val ]] && SETTING_CONTEXT_UPDATE=$_val
 _val=$(state_get_setting "$REPO_SLUG" stealth);        [[ -n $_val ]] && SETTING_STEALTH=$_val
+_val=$(state_get_setting "$REPO_SLUG" auto_merge);     [[ -n $_val ]] && SETTING_AUTO_MERGE=$_val
 _val=$(state_get_setting "$REPO_SLUG" base_branch);    [[ -n $_val ]] && BASE_BRANCH=$_val
 
 if (( CLI_INIT_SET )); then
@@ -275,11 +289,15 @@ if (( CLI_STEALTH_SET )); then
     SETTING_STEALTH=$CLI_STEALTH_VAL
     state_set_setting "$REPO_SLUG" stealth "$CLI_STEALTH_VAL"
 fi
+if (( CLI_AM_SET )); then
+    SETTING_AUTO_MERGE=$CLI_AM_VAL
+    state_set_setting "$REPO_SLUG" auto_merge "$CLI_AM_VAL"
+fi
 if (( CLI_BASE_SET )); then
     state_set_setting "$REPO_SLUG" base_branch "$BASE_BRANCH"
 fi
 
-log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH base=$BASE_BRANCH"
+log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH auto_merge=$SETTING_AUTO_MERGE base=$BASE_BRANCH"
 
 if (( INTERACTIVE )); then
     run_wizard
@@ -288,7 +306,7 @@ fi
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
 export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE RESUME CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
-export SETTING_INIT SETTING_CONTEXT_UPDATE SETTING_STEALTH INTERACTIVE
+export SETTING_INIT SETTING_CONTEXT_UPDATE SETTING_STEALTH SETTING_AUTO_MERGE AUTO_MERGE_STRATEGY INTERACTIVE
 export AUTOCODING_GH_USER AUTOCODING_GIT_NAME AUTOCODING_GIT_EMAIL BOT_ACTIVE
 export AUTOCODING_REPOS_CTX_DIR CUSTOM_BRANCH_NAME
 
