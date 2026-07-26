@@ -114,6 +114,7 @@ CLI_CTX_SET=0
 CLI_CTX_VAL=1
 CLI_STEALTH_SET=0
 CLI_STEALTH_VAL=0
+CLI_BASE_SET=0
 RESET_OPTIONS=0
 INTERACTIVE=0
 TASK_MODE=0
@@ -174,7 +175,7 @@ while (( $# )); do
         --n-oldest) SELECTION_MODE="n-oldest"; SELECTION_ARG=$2; shift 2 ;;
         --all) SELECTION_MODE="all"; shift ;;
         --max-reviews) MAX_REVIEWS=$2; shift 2 ;;
-        --base-branch) BASE_BRANCH=$2; shift 2 ;;
+        --base-branch) BASE_BRANCH=$2; CLI_BASE_SET=1; shift 2 ;;
         --repos-dir) REPOS_DIR=$2; shift 2 ;;
         --watch) WATCH=1; shift ;;
         --interval) WATCH_INTERVAL=$2; shift 2 ;;
@@ -260,6 +261,7 @@ SETTING_STEALTH=0
 _val=$(state_get_setting "$REPO_SLUG" init);           [[ -n $_val ]] && SETTING_INIT=$_val
 _val=$(state_get_setting "$REPO_SLUG" context_update); [[ -n $_val ]] && SETTING_CONTEXT_UPDATE=$_val
 _val=$(state_get_setting "$REPO_SLUG" stealth);        [[ -n $_val ]] && SETTING_STEALTH=$_val
+_val=$(state_get_setting "$REPO_SLUG" base_branch);    [[ -n $_val ]] && BASE_BRANCH=$_val
 
 if (( CLI_INIT_SET )); then
     SETTING_INIT=$CLI_INIT_VAL
@@ -273,8 +275,11 @@ if (( CLI_STEALTH_SET )); then
     SETTING_STEALTH=$CLI_STEALTH_VAL
     state_set_setting "$REPO_SLUG" stealth "$CLI_STEALTH_VAL"
 fi
+if (( CLI_BASE_SET )); then
+    state_set_setting "$REPO_SLUG" base_branch "$BASE_BRANCH"
+fi
 
-log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH"
+log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH base=$BASE_BRANCH"
 
 if (( INTERACTIVE )); then
     run_wizard

@@ -61,16 +61,22 @@ state_get_setting() {
     ' "$file"
 }
 
-# state_set_setting <slug> <key> <0|1>
+# state_set_setting <slug> <key> <val>
+# val = 0 or 1 → stored as boolean; anything else → stored as string.
 state_set_setting() {
     local slug=$1 key=$2 val=$3
     state_ensure "$slug"
-    local file bool tmp
+    local file tmp
     file=$(_state_file "$slug")
-    if [[ $val == 1 ]]; then bool=true; else bool=false; fi
     tmp=$(mktemp)
-    jq --arg k "$key" --argjson v "$bool" \
-        '.settings //= {} | .settings[$k] = $v' "$file" >"$tmp" && mv "$tmp" "$file"
+    if [[ $val == 0 ]]; then
+        jq --arg k "$key" '.settings //= {} | .settings[$k] = false' "$file" >"$tmp"
+    elif [[ $val == 1 ]]; then
+        jq --arg k "$key" '.settings //= {} | .settings[$k] = true' "$file" >"$tmp"
+    else
+        jq --arg k "$key" --arg v "$val" '.settings //= {} | .settings[$k] = $v' "$file" >"$tmp"
+    fi
+    mv "$tmp" "$file"
 }
 
 # state_reset_settings <slug> — wipes .settings
