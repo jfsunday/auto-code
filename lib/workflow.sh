@@ -141,14 +141,23 @@ process_issue() {
             LAST_ERROR="code session produced no changes"
             return 1
         fi
-        # Guard against accidentally committing huge files (e.g. node_modules,
-        # build artifacts). GitHub rejects push > 100MB — cheaper to catch here.
-        local big
-        big=$(cd "$REPO_PATH" && find . -type f -size +50M -not -path './.git/*' 2>/dev/null | head -5)
+        # Guard: refuse to commit any file > 50MB that git would actually stage.
+        # (Ignored paths like node_modules are skipped — .gitignore protects us.)
+        local big=""
+        local -a _to_stage=()
+        mapfile -t _to_stage < <(cd "$REPO_PATH" && git ls-files -o -m --exclude-standard 2>/dev/null)
+        local _p _sz
+        for _p in "${_to_stage[@]}"; do
+            [[ -f "$REPO_PATH/$_p" ]] || continue
+            _sz=$(/usr/bin/stat -c%s -- "$REPO_PATH/$_p" 2>/dev/null || /usr/bin/stat -f%z -- "$REPO_PATH/$_p" 2>/dev/null)
+            if [[ -n $_sz ]] && (( _sz > 52428800 )); then
+                big+="$(printf '  %s (%dMB)\n' "$_p" $((_sz / 1024 / 1024)))"$'\n'
+            fi
+        done
         if [[ -n $big ]]; then
-            log_error "Refusing to commit — files > 50MB found. Add them to .gitignore first:"
-            echo "$big" >&2
-            LAST_ERROR="large files present (see log)"
+            log_error "Refusing to commit — files > 50MB would be staged. Add them to .gitignore first:"
+            printf '%s' "$big" >&2
+            LAST_ERROR="large files would be staged (see log)"
             return 1
         fi
         (
