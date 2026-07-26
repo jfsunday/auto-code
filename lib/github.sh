@@ -148,7 +148,15 @@ gh_clone_if_missing() {
 # Sets LAST_PR_URL.
 gh_pr_create() {
     local title=$1 body_file=$2 out
-    out=$(cd "$REPO_PATH" && gh pr create --base "$BASE_BRANCH" --title "$title" --body-file "$body_file" 2>&1) || {
+    # Pass --head explicitly. Without this, gh looks up the current branch's
+    # tracking upstream — which our token push sets to the raw https URL, not
+    # to `origin`. That trips gh into "you must first push the current branch".
+    out=$(cd "$REPO_PATH" && gh pr create \
+            --repo "${REPO_OWNER}/${REPO_NAME}" \
+            --base "$BASE_BRANCH" \
+            --head "$WORK_BRANCH" \
+            --title "$title" \
+            --body-file "$body_file" 2>&1) || {
         log_error "gh pr create failed: $out"
         return 1
     }

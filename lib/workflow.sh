@@ -141,6 +141,16 @@ process_issue() {
             LAST_ERROR="code session produced no changes"
             return 1
         fi
+        # Guard against accidentally committing huge files (e.g. node_modules,
+        # build artifacts). GitHub rejects push > 100MB — cheaper to catch here.
+        local big
+        big=$(cd "$REPO_PATH" && find . -type f -size +50M -not -path './.git/*' 2>/dev/null | head -5)
+        if [[ -n $big ]]; then
+            log_error "Refusing to commit — files > 50MB found. Add them to .gitignore first:"
+            echo "$big" >&2
+            LAST_ERROR="large files present (see log)"
+            return 1
+        fi
         (
             cd "$REPO_PATH" || exit 1
             git add -A
