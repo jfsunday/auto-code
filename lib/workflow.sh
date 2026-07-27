@@ -61,16 +61,32 @@ process_issue() {
         WORK_BRANCH="auto/issue-${n}-${slug}"
     fi
 
-    # Auto-resume: branch already exists locally?
-    if [[ -d "$REPO_PATH/.git" ]] && \
-       (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$WORK_BRANCH" >/dev/null); then
+    # Auto-resume: only if branch exists AND has actual work on it.
+    # An empty branch (no commits ahead of base, no dirty files) is treated as
+    # a leftover — deleted and started fresh instead.
+    _check_resume_candidate() {
+        local br=$1 commits_ahead dirty=0
+        [[ -d "$REPO_PATH/.git" ]] || return 1
+        (cd "$REPO_PATH" && git rev-parse --verify --quiet "refs/heads/$br" >/dev/null) || return 1
+        commits_ahead=$(cd "$REPO_PATH" && git rev-list --count "${BASE_BRANCH}..${br}" 2>/dev/null || echo 0)
+        if [[ $(cd "$REPO_PATH" && git symbolic-ref --short HEAD 2>/dev/null) == "$br" ]]; then
+            dirty=$(cd "$REPO_PATH" && git status --porcelain | wc -l | tr -d ' ')
+        fi
+        if (( commits_ahead > 0 || dirty > 0 )); then
+            log_info "Branch $br exists (commits_ahead=$commits_ahead, dirty=$dirty) — auto-resuming."
+            return 0
+        fi
+        log_warn "Branch $br exists but is empty — deleting and starting fresh."
+        (cd "$REPO_PATH" && git checkout "$BASE_BRANCH" >/dev/null 2>&1 && git branch -D "$br" >/dev/null 2>&1) || true
+        return 1
+    }
+
+    if _check_resume_candidate "$WORK_BRANCH"; then
         RESUME_MODE=1
-        log_info "Branch $WORK_BRANCH exists — auto-resuming (skipping init/plan/code)."
-    elif [[ -n $active_branch && $active_branch =~ ^auto/issue-${n}- ]]; then
-        # Special case: user is on an auto branch matching this issue, adopt it
+    elif [[ -n $active_branch && $active_branch =~ ^auto/issue-${n}- ]] && _check_resume_candidate "$active_branch"; then
+        # Fallback: slug drift — user is on an auto branch matching this issue
         WORK_BRANCH=$active_branch
         RESUME_MODE=1
-        log_info "Currently on $WORK_BRANCH — auto-resuming (skipping init/plan/code)."
     fi
     export WORK_BRANCH
 
