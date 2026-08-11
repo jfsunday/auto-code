@@ -22,6 +22,15 @@ set -o pipefail
 : "${CLAUDE_BACKOFF_BASE:=5}"
 : "${CLAUDE_MAX_BUDGET_USD:=}"
 
+# Coding engine: "claude" (default) or "opencode". Selects which CLI drives the
+# planning/coding/review sessions. Model string is passed through unchanged; for
+# opencode use provider/model form (e.g. groq/openai/gpt-oss-120b).
+: "${CODING_ENGINE:=claude}"
+# Default model for the opencode engine (must be provider/model form). Used when
+# the user picks --engine opencode without an explicit --model. The claude
+# engine keeps its own default (CLAUDE_MODEL). Override in config.env.
+: "${OPENCODE_MODEL:=groq/openai/gpt-oss-120b}"
+
 # Bot identity (optional). If AUTOCODING_GH_USER is set, all gh/git calls the
 # script makes are done as that GitHub user via `gh auth token --user <user>`.
 # Your normal shell keeps whatever gh account is active — only the script

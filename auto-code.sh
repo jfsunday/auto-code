@@ -79,10 +79,22 @@ Optional context sessions (auto-persisted per repo):
   --auto-merge          Merge the PR immediately after creating it. Pulls the
                         updated base branch locally so the next issue starts
                         from up-to-date code (avoids serial-phase conflicts).
+                        Also closes the source issue (safety net in case
+                        "Closes #N" auto-close is skipped by GitHub).
                         Skipped in --local mode.
   --no-auto-merge       Disable auto-merge (default)
   --auto-merge-strategy Merge strategy: merge (default) | squash | rebase
   --reset-options       Wipe persisted per-repo settings back to defaults
+
+Coding engine (persisted per repo):
+  --engine NAME         claude (default) | opencode. Selects the CLI that runs
+                        the plan/code/review/fix/context sessions. Both agents
+                        read CLAUDE.md automatically; opencode additionally
+                        picks up AGENTS.md and ~/.config/opencode/AGENTS.md.
+  --model NAME          Model to use. Passed through to the selected engine.
+                        For --engine opencode use provider/model form
+                        (e.g. anthropic/claude-sonnet-4-5, google/gemini-2.5-pro).
+                        For --engine claude a plain alias works (opus, sonnet).
 
 Interactive:
   -i, --interactive     Ask for branch prefix, model, max-reviews, base-branch
@@ -124,6 +136,10 @@ CLI_BASE_SET=0
 CLI_AM_SET=0
 CLI_AM_VAL=0
 AUTO_MERGE_STRATEGY="merge"
+CLI_ENGINE_SET=0
+CLI_ENGINE_VAL=""
+CLI_MODEL_SET=0
+CLI_MODEL_VAL=""
 RESET_OPTIONS=0
 INTERACTIVE=0
 TASK_MODE=0
@@ -203,6 +219,8 @@ while (( $# )); do
         --auto-merge)         CLI_AM_SET=1; CLI_AM_VAL=1; shift ;;
         --no-auto-merge)      CLI_AM_SET=1; CLI_AM_VAL=0; shift ;;
         --auto-merge-strategy) AUTO_MERGE_STRATEGY=$2; shift 2 ;;
+        --engine)             CLI_ENGINE_SET=1; CLI_ENGINE_VAL=$2; shift 2 ;;
+        --model)              CLI_MODEL_SET=1;  CLI_MODEL_VAL=$2;  shift 2 ;;
         --interactive|-i)     INTERACTIVE=1; shift ;;
         --branch)             CUSTOM_BRANCH_NAME=$2; shift 2 ;;
         --task)               TASK_MODE=1; TASK_TITLE=$2; shift 2 ;;
@@ -271,11 +289,14 @@ SETTING_INIT=1
 SETTING_CONTEXT_UPDATE=1
 SETTING_STEALTH=0
 SETTING_AUTO_MERGE=0
+MODEL_EXPLICIT=0   # 1 once a model comes from persisted state or a CLI --model
 _val=$(state_get_setting "$REPO_SLUG" init);           [[ -n $_val ]] && SETTING_INIT=$_val
 _val=$(state_get_setting "$REPO_SLUG" context_update); [[ -n $_val ]] && SETTING_CONTEXT_UPDATE=$_val
 _val=$(state_get_setting "$REPO_SLUG" stealth);        [[ -n $_val ]] && SETTING_STEALTH=$_val
 _val=$(state_get_setting "$REPO_SLUG" auto_merge);     [[ -n $_val ]] && SETTING_AUTO_MERGE=$_val
 _val=$(state_get_setting "$REPO_SLUG" base_branch);    [[ -n $_val ]] && BASE_BRANCH=$_val
+_val=$(state_get_setting "$REPO_SLUG" engine);         [[ -n $_val ]] && CODING_ENGINE=$_val
+_val=$(state_get_setting "$REPO_SLUG" model);          [[ -n $_val ]] && { CLAUDE_MODEL=$_val; MODEL_EXPLICIT=1; }
 
 if (( CLI_INIT_SET )); then
     SETTING_INIT=$CLI_INIT_VAL
@@ -296,15 +317,49 @@ fi
 if (( CLI_BASE_SET )); then
     state_set_setting "$REPO_SLUG" base_branch "$BASE_BRANCH"
 fi
+if (( CLI_ENGINE_SET )); then
+    case $CLI_ENGINE_VAL in
+        claude|opencode) ;;
+        *) log_error "--engine must be 'claude' or 'opencode' (got: $CLI_ENGINE_VAL)"; exit 2 ;;
+    esac
+    CODING_ENGINE=$CLI_ENGINE_VAL
+    state_set_setting "$REPO_SLUG" engine "$CLI_ENGINE_VAL"
+fi
+if (( CLI_MODEL_SET )); then
+    CLAUDE_MODEL=$CLI_MODEL_VAL
+    MODEL_EXPLICIT=1
+    state_set_setting "$REPO_SLUG" model "$CLI_MODEL_VAL"
+fi
 
-log_info "Options: init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH auto_merge=$SETTING_AUTO_MERGE base=$BASE_BRANCH"
+# Engine-specific default model. CLAUDE_MODEL's built-in default is a Claude
+# alias (e.g. "opus") that opencode cannot resolve — it would silently ignore it
+# and fall back to its own last-used model. So when the engine is opencode and
+# the user never picked a model explicitly (no --model, none persisted), use the
+# opencode default OPENCODE_MODEL instead.
+if (( MODEL_EXPLICIT == 0 )) && [[ $CODING_ENGINE == opencode && -n ${OPENCODE_MODEL:-} ]]; then
+    CLAUDE_MODEL=$OPENCODE_MODEL
+fi
+
+# opencode expects provider/model form — warn if it looks like a bare Claude alias.
+if [[ $CODING_ENGINE == opencode && $CLAUDE_MODEL != */* ]]; then
+    log_warn "engine=opencode but model '$CLAUDE_MODEL' has no provider/ prefix — opencode may reject it and fall back to its own model."
+    log_warn "Use a provider/model id from your opencode config, e.g. --model $OPENCODE_MODEL or --model litellm/claude-sonnet-4-6."
+fi
+
+# Make sure the selected engine binary is actually installed before we spend time.
+if ! command -v "$CODING_ENGINE" >/dev/null 2>&1; then
+    log_error "Selected engine '$CODING_ENGINE' not found in PATH. Install it or pass --engine claude."
+    exit 2
+fi
+
+log_info "Options: engine=$CODING_ENGINE model=$CLAUDE_MODEL init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH auto_merge=$SETTING_AUTO_MERGE base=$BASE_BRANCH"
 
 if (( INTERACTIVE )); then
     run_wizard
 fi
 
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
-export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE RESUME CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
+export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE RESUME CODING_ENGINE CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
 export SETTING_INIT SETTING_CONTEXT_UPDATE SETTING_STEALTH SETTING_AUTO_MERGE AUTO_MERGE_STRATEGY INTERACTIVE
 export AUTOCODING_GH_USER AUTOCODING_GIT_NAME AUTOCODING_GIT_EMAIL BOT_ACTIVE
