@@ -32,6 +32,11 @@ source "$LIB_DIR/usage.sh"
 source "$LIB_DIR/wizard.sh"
 # shellcheck source=lib/workflow.sh
 source "$LIB_DIR/workflow.sh"
+# >>> autocode-parallel: extra libs
+source "$LIB_DIR/models.sh"
+source "$LIB_DIR/ratelimit.sh"
+source "$LIB_DIR/parallel.sh"
+# <<< autocode-parallel
 
 usage() {
     cat <<'EOF'
@@ -111,6 +116,25 @@ Task mode (no GitHub issues — works with any git remote):
   --task-id <slug>      Override branch slug (default: from title). Reusing the
                         same id auto-resumes the existing task branch.
 
+Parallel processing (issues run concurrently, only conflict-free groups):
+  --parallel            Enable parallel mode. A pre-check groups issues unlikely
+                        to touch the same files; only those run at the same time.
+                        Each issue builds in its own git worktree (shared object
+                        store) → own branch + own PR.
+  --no-parallel         Disable parallel mode (default).
+  --parallel-max N      Max concurrent issues (default: 3). Auto-drops to 1 on
+                        rate limits, then ramps back up when clear.
+
+Per-phase engine/model (empty = inherit the global --engine/--model):
+  --engine-plan NAME    Engine for the plan phase (claude | opencode)
+  --model-plan NAME     Model for the plan phase (e.g. opus)
+  --engine-code NAME    Engine for the code phase
+  --model-code NAME     Model for the code phase (e.g. sonnet)
+  --engine-review NAME  Engine for the review phase (e.g. opencode)
+  --model-review NAME   Model for the review phase (e.g. anthropic/claude-sonnet-4-5)
+  --engine-fix NAME     Engine for the fix phase
+  --model-fix NAME      Model for the fix phase
+
   -h, --help            Show this help
 EOF
 }
@@ -147,6 +171,15 @@ TASK_TITLE=""
 TASK_BODY=""
 TASK_BODY_FILE=""
 TASK_ID=""
+# >>> autocode-parallel: defaults
+PARALLEL_ENABLED=0
+PARALLEL_MAX=3
+CLI_PARALLEL_SET=0
+ENGINE_PLAN="${ENGINE_PLAN:-}";     MODEL_PLAN="${MODEL_PLAN:-}"
+ENGINE_CODE="${ENGINE_CODE:-}";     MODEL_CODE="${MODEL_CODE:-}"
+ENGINE_REVIEW="${ENGINE_REVIEW:-}"; MODEL_REVIEW="${MODEL_REVIEW:-}"
+ENGINE_FIX="${ENGINE_FIX:-}";       MODEL_FIX="${MODEL_FIX:-}"
+# <<< autocode-parallel
 
 # Sub-commands ------------------------------------------------------------
 if [[ ${1:-} == "add-issue" ]]; then
@@ -228,6 +261,19 @@ while (( $# )); do
         --task-body-file)     TASK_BODY_FILE=$2; shift 2 ;;
         --task-id)            TASK_ID=$2; shift 2 ;;
         --reset-options)      RESET_OPTIONS=1; shift ;;
+        # >>> autocode-parallel: flags
+        --parallel)      PARALLEL_ENABLED=1; CLI_PARALLEL_SET=1; shift ;;
+        --no-parallel)   PARALLEL_ENABLED=0; CLI_PARALLEL_SET=1; shift ;;
+        --parallel-max)  PARALLEL_MAX=$2; CLI_PARALLEL_SET=1; shift 2 ;;
+        --engine-plan)   ENGINE_PLAN=$2;   shift 2 ;;
+        --model-plan)    MODEL_PLAN=$2;    shift 2 ;;
+        --engine-code)   ENGINE_CODE=$2;   shift 2 ;;
+        --model-code)    MODEL_CODE=$2;    shift 2 ;;
+        --engine-review) ENGINE_REVIEW=$2; shift 2 ;;
+        --model-review)  MODEL_REVIEW=$2;  shift 2 ;;
+        --engine-fix)    ENGINE_FIX=$2;    shift 2 ;;
+        --model-fix)     MODEL_FIX=$2;     shift 2 ;;
+        # <<< autocode-parallel
         --) shift; break ;;
         -*) log_error "Unknown option: $1"; usage; exit 2 ;;
         *)
@@ -297,6 +343,10 @@ _val=$(state_get_setting "$REPO_SLUG" auto_merge);     [[ -n $_val ]] && SETTING
 _val=$(state_get_setting "$REPO_SLUG" base_branch);    [[ -n $_val ]] && BASE_BRANCH=$_val
 _val=$(state_get_setting "$REPO_SLUG" engine);         [[ -n $_val ]] && CODING_ENGINE=$_val
 _val=$(state_get_setting "$REPO_SLUG" model);          [[ -n $_val ]] && { CLAUDE_MODEL=$_val; MODEL_EXPLICIT=1; }
+# >>> autocode-parallel: load persisted parallel settings
+_val=$(state_get_setting "$REPO_SLUG" parallel);     [[ -n $_val ]] && PARALLEL_ENABLED=$_val
+_val=$(state_get_setting "$REPO_SLUG" parallel_max); [[ -n $_val ]] && PARALLEL_MAX=$_val
+# <<< autocode-parallel
 
 if (( CLI_INIT_SET )); then
     SETTING_INIT=$CLI_INIT_VAL
@@ -331,6 +381,13 @@ if (( CLI_MODEL_SET )); then
     state_set_setting "$REPO_SLUG" model "$CLI_MODEL_VAL"
 fi
 
+# >>> autocode-parallel: persist parallel settings from CLI
+if (( CLI_PARALLEL_SET )); then
+    state_set_setting "$REPO_SLUG" parallel "$PARALLEL_ENABLED"
+    state_set_setting "$REPO_SLUG" parallel_max "$PARALLEL_MAX"
+fi
+# <<< autocode-parallel
+
 # Engine-specific default model. CLAUDE_MODEL's built-in default is a Claude
 # alias (e.g. "opus") that opencode cannot resolve — it would silently ignore it
 # and fall back to its own last-used model. So when the engine is opencode and
@@ -364,6 +421,11 @@ export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
 export SETTING_INIT SETTING_CONTEXT_UPDATE SETTING_STEALTH SETTING_AUTO_MERGE AUTO_MERGE_STRATEGY INTERACTIVE
 export AUTOCODING_GH_USER AUTOCODING_GIT_NAME AUTOCODING_GIT_EMAIL BOT_ACTIVE
 export AUTOCODING_REPOS_CTX_DIR CUSTOM_BRANCH_NAME
+# >>> autocode-parallel: exports
+export PARALLEL_ENABLED PARALLEL_MAX SCRIPT_DIR
+export ENGINE_PLAN MODEL_PLAN ENGINE_CODE MODEL_CODE ENGINE_REVIEW MODEL_REVIEW ENGINE_FIX MODEL_FIX
+export RL_COOLDOWN RL_RAMP_INTERVAL RL_FLAG
+# <<< autocode-parallel
 
 (( LOCAL_MODE )) && log_info "Local mode: no push, no PR, no context-update."
 
@@ -396,6 +458,12 @@ run_cycle() {
     local n rc=0
     if (( ${#issues[@]} > 1 )); then MULTI_TARGETS=1; else MULTI_TARGETS=0; fi
     export MULTI_TARGETS
+    # >>> autocode-parallel: parallel dispatch
+    if (( ${PARALLEL_ENABLED:-0} == 1 )) && (( ${TASK_MODE:-0} == 0 )) && (( ${#issues[@]} > 1 )); then
+        parallel_run "${issues[@]}"
+        return $?
+    fi
+    # <<< autocode-parallel
     for n in "${issues[@]}"; do
         if process_issue "$n"; then
             if (( TASK_MODE == 1 )); then

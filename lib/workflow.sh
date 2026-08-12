@@ -110,9 +110,22 @@ process_issue() {
 
     if (( RESUME_MODE == 0 )); then
         # --- Fresh path: sync repo, ensure CLAUDE.md, new branch, plan+code ---
-        if ! gh_clone_if_missing; then
-            LAST_ERROR="clone/sync of ${REPO_OWNER}/${REPO_NAME} failed"
-            return 1
+        if (( ${AUTOCODE_WORKTREE:-0} == 1 )); then
+            # Worktree mode: the parent scheduler already created $REPO_PATH as a
+            # detached git worktree of the shared clone at BASE_BRANCH's tip.
+            # Do NOT clone and do NOT check out BASE_BRANCH — it is checked out in
+            # the primary clone and git forbids a second checkout of the same
+            # branch. In a worktree $REPO_PATH/.git is a FILE (gitdir pointer),
+            # so test with -e rather than -d.
+            if [[ ! -e "$REPO_PATH/.git" ]]; then
+                LAST_ERROR="worktree mode: expected a worktree at $REPO_PATH but found none"
+                return 1
+            fi
+        else
+            if ! gh_clone_if_missing; then
+                LAST_ERROR="clone/sync of ${REPO_OWNER}/${REPO_NAME} failed"
+                return 1
+            fi
         fi
         if ! ensure_claude_md; then
             [[ -z $LAST_ERROR ]] && LAST_ERROR="CLAUDE.md init failed"
@@ -123,9 +136,15 @@ process_issue() {
         log_info "Work branch: $WORK_BRANCH"
         (
             cd "$REPO_PATH" || exit 1
-            git checkout "$BASE_BRANCH" >/dev/null
-            git branch -D "$WORK_BRANCH" 2>/dev/null || true
-            git checkout -b "$WORK_BRANCH" >/dev/null
+            if (( ${AUTOCODE_WORKTREE:-0} == 1 )); then
+                # HEAD is already detached at BASE_BRANCH's tip — just cut the
+                # work branch from it (-B resets a stale same-name branch).
+                git checkout -B "$WORK_BRANCH" >/dev/null
+            else
+                git checkout "$BASE_BRANCH" >/dev/null
+                git branch -D "$WORK_BRANCH" 2>/dev/null || true
+                git checkout -b "$WORK_BRANCH" >/dev/null
+            fi
         ) || { LAST_ERROR="branch checkout failed"; return 1; }
 
         # Plan
@@ -290,7 +309,7 @@ process_issue() {
 
         # ---- Optional: auto-merge and sync base ----
         if (( ${SETTING_AUTO_MERGE:-0} == 1 )); then
-            if ! gh_pr_merge_now "$LAST_PR_URL"; then
+            if ! gh_pr_merge_now "$LAST_PR_URL" "$n"; then
                 log_warn "Auto-merge failed — PR left open for manual review."
             fi
         fi

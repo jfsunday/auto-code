@@ -16,6 +16,10 @@
 
 claude_run() {
     local template=$1 out_dir=$2 label=$3
+    # >>> autocode-parallel: per-phase engine/model (shadows globals for this session)
+    local CODING_ENGINE="${CODING_ENGINE:-claude}" CLAUDE_MODEL="${CLAUDE_MODEL:-}"
+    declare -F models_resolve >/dev/null && models_resolve "$label"
+    # <<< autocode-parallel
     local rendered="$out_dir/prompt-${label}.md"
     local sess_out="$out_dir/session-${label}.json"
 
@@ -34,19 +38,39 @@ claude_run() {
         return 0
     fi
 
-    local -a claude_cmd=(
-        claude -p "$(cat "$rendered")"
-        --dangerously-skip-permissions
-        --add-dir "$REPO_PATH"
-        --model "$CLAUDE_MODEL"
-    )
-    # In stealth mode Claude needs write-access to the external context dir
-    # (that's where CLAUDE.md + issue-N-*.md live).
-    if (( ${SETTING_STEALTH:-0} == 1 )) && [[ -n ${AUTOCODING_REPOS_CTX_DIR:-} ]]; then
-        claude_cmd+=(--add-dir "$AUTOCODING_REPOS_CTX_DIR/$REPO_SLUG")
-    fi
-    if [[ -n ${CLAUDE_MAX_BUDGET_USD:-} ]]; then
-        claude_cmd+=(--max-budget-usd "$CLAUDE_MAX_BUDGET_USD")
+    local -a claude_cmd
+    if [[ ${CODING_ENGINE:-claude} == opencode ]]; then
+        # opencode run: model in provider/model form, --dir sets CWD, --auto
+        # is the equivalent of Claude's --dangerously-skip-permissions.
+        # opencode reads CLAUDE.md and AGENTS.md automatically (project and
+        # global), so no extra context wiring is needed here.
+        claude_cmd=(
+            opencode run
+            --auto
+            --dir "$REPO_PATH"
+            --model "$CLAUDE_MODEL"
+        )
+        # Stealth mode: expose the external context dir so opencode can read/
+        # write CLAUDE.md + issue-N-*.md sitting outside the repo.
+        # opencode has no --add-dir, but --dir sets the base for tools; the
+        # external path is absolute so tools reach it either way.
+        # Prompt is a positional at the end.
+        claude_cmd+=("$(cat "$rendered")")
+    else
+        claude_cmd=(
+            claude -p "$(cat "$rendered")"
+            --dangerously-skip-permissions
+            --add-dir "$REPO_PATH"
+            --model "$CLAUDE_MODEL"
+        )
+        # In stealth mode Claude needs write-access to the external context dir
+        # (that's where CLAUDE.md + issue-N-*.md live).
+        if (( ${SETTING_STEALTH:-0} == 1 )) && [[ -n ${AUTOCODING_REPOS_CTX_DIR:-} ]]; then
+            claude_cmd+=(--add-dir "$AUTOCODING_REPOS_CTX_DIR/$REPO_SLUG")
+        fi
+        if [[ -n ${CLAUDE_MAX_BUDGET_USD:-} ]]; then
+            claude_cmd+=(--max-budget-usd "$CLAUDE_MAX_BUDGET_USD")
+        fi
     fi
 
     local attempt max=$CLAUDE_RETRIES
@@ -63,6 +87,16 @@ claude_run() {
             log_error "Session '$label' hit CLAUDE_MAX_BUDGET_USD=${CLAUDE_MAX_BUDGET_USD:-<unset>}. Increase or unset it in ~/.config/autocoding/config.env."
             return 1
         fi
+        # >>> autocode-parallel: rate-limit detection
+        if declare -F rl_detect >/dev/null && rl_detect "$sess_out"; then
+            rl_mark
+            CLAUDE_LAST_ERROR_KIND=ratelimit
+            log_warn "Rate limit detected in session '$label' — signaling scheduler."
+            _rlw=${RL_COOLDOWN:-60}
+            log_warn "Backing off ${_rlw}s for rate limit."
+            sleep "$_rlw"
+        fi
+        # <<< autocode-parallel
         log_warn "Attempt $attempt failed."
         if (( attempt < max )); then
             log_warn "Backing off ${backoff}s before retry."
@@ -80,6 +114,11 @@ claude_run() {
 _claude_do() {
     local sess_out=$1; shift
     local rc
+
+    if [[ ${CODING_ENGINE:-claude} == opencode ]]; then
+        _opencode_do "$sess_out" "$@"
+        return $?
+    fi
 
     if (( VERBOSE == 1 )); then
         # Stream-json: NDJSON of events; tee to file, print text deltas live.
@@ -112,6 +151,58 @@ _claude_do() {
     fi
     export CLAUDE_LAST_RESULT
     log_info "Session tokens: input=$CLAUDE_LAST_TOK_INPUT output=$CLAUDE_LAST_TOK_OUTPUT cache_c=$CLAUDE_LAST_TOK_CACHE_CREATE cache_r=$CLAUDE_LAST_TOK_CACHE_READ (sum=$CLAUDE_LAST_TOKENS)"
+    return 0
+}
+
+# Runs one opencode invocation. opencode uses --format json (event stream),
+# --dir sets CWD, --auto skips permission prompts. Session output goes to
+# $sess_out; the final assistant text is extracted into CLAUDE_LAST_RESULT.
+# Token usage is best-effort — opencode's event schema differs from Claude's.
+_opencode_do() {
+    local sess_out=$1; shift
+    local rc
+    _claude_reset_usage
+
+    if (( VERBOSE == 1 )); then
+        # Stream JSON events to file; print any text-bearing event lines live.
+        ("$@" --format json) \
+            | tee "$sess_out" \
+            | jq -r --unbuffered '
+                if .type=="message.part.updated" and (.part.type=="text") then (.part.text // empty)
+                elif .type=="assistant" and (.message.content // [])[0].text? then .message.content[0].text
+                elif .text? then .text
+                else empty end' 2>/dev/null \
+            | while IFS= read -r chunk; do printf '%s\n' "$chunk"; done
+        rc=${PIPESTATUS[0]}
+        echo
+        [[ $rc -ne 0 ]] && return 1
+    else
+        if ! "$@" --format json >"$sess_out" 2>>"${LOG_FILE:-/dev/null}"; then
+            return 1
+        fi
+    fi
+
+    # Extract final assistant text. opencode emits NDJSON events; the last
+    # text-bearing part on the "assistant" message is the reply.
+    CLAUDE_LAST_RESULT=$(jq -sr '
+        [ .[]
+          | select(.type=="message.updated" or .type=="message.part.updated" or .type=="assistant" or .part?)
+        ] as $evts
+        | ( [ $evts[] | (.part.text? // .message.content[0].text? // .text?) | select(. != null and . != "") ] | last ) // ""
+    ' "$sess_out" 2>/dev/null)
+
+    # Fallback: if json parse yielded nothing, try plain stdout capture (some
+    # opencode builds print the reply as a single line under the JSON stream).
+    if [[ -z ${CLAUDE_LAST_RESULT:-} && -s $sess_out ]]; then
+        CLAUDE_LAST_RESULT=$(grep -v '^{' "$sess_out" 2>/dev/null | awk 'NF' | tail -n 20 | tr '\n' ' ')
+    fi
+
+    if [[ -z ${CLAUDE_LAST_RESULT:-} ]]; then
+        log_error "Empty result from opencode. Session dump: $sess_out"
+        return 1
+    fi
+    export CLAUDE_LAST_RESULT
+    log_info "opencode session done (token tracking not available for this engine)."
     return 0
 }
 
