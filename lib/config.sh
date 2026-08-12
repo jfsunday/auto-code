@@ -29,7 +29,7 @@ set -o pipefail
 # Default model for the opencode engine (must be provider/model form). Used when
 # the user picks --engine opencode without an explicit --model. The claude
 # engine keeps its own default (CLAUDE_MODEL). Override in config.env.
-: "${OPENCODE_MODEL:=groq/openai/gpt-oss-120b}"
+: "${OPENCODE_MODEL:=nvidia/qwen/qwen3-coder-480b-a35b-instruct}"
 
 # Bot identity (optional). If AUTOCODING_GH_USER is set, all gh/git calls the
 # script makes are done as that GitHub user via `gh auth token --user <user>`.

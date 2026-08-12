@@ -148,9 +148,13 @@ gh_clone_if_missing() {
 # Sets LAST_PR_URL.
 # Merge a PR immediately and pull the updated base branch locally so the next
 # issue starts from an up-to-date base (prevents parallel-branch conflicts).
-# Args: PR_URL. Strategy from $AUTO_MERGE_STRATEGY (merge/squash/rebase).
+# Args: PR_URL [ISSUE_NUMBER]. Strategy from $AUTO_MERGE_STRATEGY.
+# If ISSUE_NUMBER is passed and numeric, closes that issue after merge as a
+# safety net — "Closes #N" auto-close only fires when the PR targets the
+# repo's default branch, so bots merging into a non-default base can leave
+# issues open.
 gh_pr_merge_now() {
-    local pr_url=$1 strategy=${AUTO_MERGE_STRATEGY:-merge} flag
+    local pr_url=$1 issue_num=${2:-} strategy=${AUTO_MERGE_STRATEGY:-merge} flag
     case $strategy in
         merge)  flag="--merge" ;;
         squash) flag="--squash" ;;
@@ -174,6 +178,21 @@ gh_pr_merge_now() {
         git branch -D "$WORK_BRANCH" 2>/dev/null || true
     ) || log_warn "Local base sync after merge had issues (non-fatal)."
     log_ok "Local $BASE_BRANCH is up-to-date."
+
+    # Close the source issue explicitly. Idempotent: gh returns success even
+    # if the issue is already closed (e.g. by GitHub's Closes-#N auto-close).
+    if [[ -n $issue_num && $issue_num =~ ^[0-9]+$ ]]; then
+        local close_out
+        if close_out=$(_gh issue close "$issue_num" \
+                        --reason completed \
+                        --comment "Auto-closed after PR merge ($pr_url)." 2>&1); then
+            log_ok "Issue #$issue_num closed."
+        else
+            # Not fatal — merge already succeeded. Common causes: already
+            # closed, insufficient permissions, or issue moved/deleted.
+            log_warn "Could not close issue #$issue_num: $close_out"
+        fi
+    fi
 }
 
 gh_pr_create() {
