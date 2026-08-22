@@ -29,6 +29,7 @@ scan_main() {
             --model)        SCAN_MODEL=$2; shift 2 ;;
             --engine)       SCAN_ENGINE=$2; shift 2 ;;
             --context)      SCAN_CONTEXT=$2; shift 2 ;;
+            --verbose)      VERBOSE=1; shift ;;
             -h|--help)
                 cat <<'HELPEOF'
 auto-code scan <owner/repo> [options]
@@ -46,6 +47,7 @@ Options:
   --model NAME           Model for the scan session
   --engine NAME          Engine for the scan session
   --context TEXT         Extra context or instructions for the scan
+  --verbose              Live-stream Claude session output
   -h, --help             Show this help
 HELPEOF
                 return 0 ;;
@@ -87,7 +89,10 @@ HELPEOF
         export CLAUDE_MODEL
     fi
 
+    : "${VERBOSE:=0}"
+    DRY_RUN=$SCAN_DRY_RUN
     export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH
+    export VERBOSE DRY_RUN
 
     gh_clone_if_missing || return 1
 
