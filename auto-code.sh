@@ -37,11 +37,13 @@ source "$LIB_DIR/models.sh"
 source "$LIB_DIR/ratelimit.sh"
 source "$LIB_DIR/parallel.sh"
 # <<< autocode-parallel
+source "$LIB_DIR/scan.sh"
 
 usage() {
     cat <<'EOF'
 auto-code <owner/repo> [options]
 auto-code add-issue <owner/repo> "<title>" [--body "<text>" | --body-file <path>]
+auto-code scan <owner/repo> [options]
 
 Turn GitHub issues into pull requests using Claude Code.
 
@@ -219,6 +221,12 @@ if [[ ${1:-} == "add-issue" ]]; then
     url=$(gh issue create "${_args[@]}") || { log_error "gh issue create failed"; exit 1; }
     log_ok "Issue created: $url"
     exit 0
+fi
+
+if [[ ${1:-} == "scan" ]]; then
+    shift
+    scan_main "$@"
+    exit $?
 fi
 
 # Argument parsing --------------------------------------------------------
