@@ -11,7 +11,7 @@ scan_main() {
     local SCAN_PATHS=""
     local SCAN_FIX=0
     local SCAN_DRY_RUN=0
-    local SCAN_MAX_FINDINGS=20
+    local SCAN_MAX_FINDINGS=""
     local SCAN_MIN_PRIORITY="low"
     local SCAN_MODEL=""
     local SCAN_ENGINE=""
@@ -41,7 +41,7 @@ Options:
   --path PATH,...        Only scan specific paths (default: whole repo)
   --fix                  Auto-fix created issues via auto-code
   --dry-run              Show findings without creating issues
-  --max-findings N       Max number of findings (default: 20)
+  --max-findings N       Max number of findings (default: unlimited)
   --priority LEVEL       Minimum priority: high, medium, low (default: low)
   --model NAME           Model for the scan session
   --engine NAME          Engine for the scan session
@@ -128,7 +128,7 @@ HELPEOF
     export CLAUDE_MD_PATH
 
     # --- Export MAX_FINDINGS and extra context for prompt ---
-    local MAX_FINDINGS=$SCAN_MAX_FINDINGS
+    local MAX_FINDINGS="${SCAN_MAX_FINDINGS:-unlimited}"
     export MAX_FINDINGS
     local EXTRA_CONTEXT="${SCAN_CONTEXT:-}"
     export EXTRA_CONTEXT
@@ -138,7 +138,7 @@ HELPEOF
     mkdir -p "$log_dir"
     LOG_FILE="$log_dir/scan.log"
 
-    log_info "Starting scan of ${REPO_OWNER}/${REPO_NAME} (max findings: $SCAN_MAX_FINDINGS, min priority: $SCAN_MIN_PRIORITY)"
+    log_info "Starting scan of ${REPO_OWNER}/${REPO_NAME} (max findings: ${SCAN_MAX_FINDINGS:-unlimited}, min priority: $SCAN_MIN_PRIORITY)"
 
     if ! claude_run "$PROMPTS_DIR/scan.md" "$log_dir" "scan"; then
         log_error "Scan session failed"
@@ -172,7 +172,7 @@ HELPEOF
     fi
 
     # --- Max findings cap ---
-    if (( findings_count > SCAN_MAX_FINDINGS )); then
+    if [[ -n $SCAN_MAX_FINDINGS ]] && (( findings_count > SCAN_MAX_FINDINGS )); then
         filtered_json=$(echo "$filtered_json" | jq ".[0:$SCAN_MAX_FINDINGS]")
         findings_count=$SCAN_MAX_FINDINGS
         log_info "Capped to $SCAN_MAX_FINDINGS findings"
