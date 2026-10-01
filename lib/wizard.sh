@@ -85,11 +85,17 @@ run_wizard() {
     export PARALLEL_ENABLED PARALLEL_MAX ENGINE_PLAN MODEL_PLAN ENGINE_CODE MODEL_CODE ENGINE_REVIEW MODEL_REVIEW ENGINE_FIX MODEL_FIX
     # <<< autocode-parallel
 
+    read -rp "  Reviewer for non-merged PRs (owner|<login>|none) [${SETTING_REVIEWER:-owner}]: " ans
+    if [[ -n $ans ]]; then
+        SETTING_REVIEWER=$ans
+        state_set_setting "$REPO_SLUG" reviewer "$ans"
+    fi
+
     read -rp "  Proceed? [Y/n] " ans
     if [[ $ans =~ ^[Nn] ]]; then
         log_info "Aborted by user."
         exit 0
     fi
 
-    export CODING_ENGINE CLAUDE_MODEL MAX_REVIEWS BASE_BRANCH CUSTOM_BRANCH_NAME
+    export CODING_ENGINE CLAUDE_MODEL MAX_REVIEWS BASE_BRANCH CUSTOM_BRANCH_NAME SETTING_REVIEWER
 }
