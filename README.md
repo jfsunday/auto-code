@@ -149,6 +149,21 @@ auto-code myuser/myrepo --reset-options
 
 Effective options are logged at the top of every run: `Options: init=0 context_update=1`.
 
+## Review requests on non-merged PRs
+
+When a PR is **not** auto-merged (no `--auto-merge`, or the merge failed), auto-code requests a review so the PR doesn't sit unnoticed. The choice is persisted per repo:
+
+```bash
+auto-code owner/repo                       # default: request review from the repo owner
+auto-code owner/repo --reviewer someuser   # request review from a specific GitHub user
+auto-code owner/repo --no-reviewer         # no review request
+```
+
+- Org-owned repos: `owner` can't be requested (orgs can't review) — use `--reviewer <login>`.
+- If the reviewer is the PR author (e.g. no bot identity active and you own the repo), the request is skipped — GitHub doesn't allow self-review requests.
+- Failures (e.g. user isn't a collaborator) only log a warning; the PR stays open.
+- Global default via `DEFAULT_REVIEWER` in `config.env`.
+
 ## Token usage tracking
 
 Every Claude session (init / plan / code / review-N / fix-N / context-update) has

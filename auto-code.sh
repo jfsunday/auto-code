@@ -91,6 +91,10 @@ Optional context sessions (auto-persisted per repo):
                         Skipped in --local mode.
   --no-auto-merge       Disable auto-merge (default)
   --auto-merge-strategy Merge strategy: merge (default) | squash | rebase
+  --reviewer WHO        When a PR is not auto-merged (or the merge fails),
+                        request a review from WHO: owner (default, repo owner;
+                        skipped for org-owned repos) | <github-login>
+  --no-reviewer         Don't request a review on non-merged PRs
   --reset-options       Wipe persisted per-repo settings back to defaults
 
 Coding engine (persisted per repo):
@@ -162,6 +166,8 @@ CLI_BASE_SET=0
 CLI_AM_SET=0
 CLI_AM_VAL=0
 AUTO_MERGE_STRATEGY="merge"
+CLI_REVIEWER_SET=0
+CLI_REVIEWER_VAL=""
 CLI_ENGINE_SET=0
 CLI_ENGINE_VAL=""
 CLI_MODEL_SET=0
@@ -260,6 +266,8 @@ while (( $# )); do
         --auto-merge)         CLI_AM_SET=1; CLI_AM_VAL=1; shift ;;
         --no-auto-merge)      CLI_AM_SET=1; CLI_AM_VAL=0; shift ;;
         --auto-merge-strategy) AUTO_MERGE_STRATEGY=$2; shift 2 ;;
+        --reviewer)           CLI_REVIEWER_SET=1; CLI_REVIEWER_VAL=$2; shift 2 ;;
+        --no-reviewer)        CLI_REVIEWER_SET=1; CLI_REVIEWER_VAL=none; shift ;;
         --engine)             CLI_ENGINE_SET=1; CLI_ENGINE_VAL=$2; shift 2 ;;
         --model)              CLI_MODEL_SET=1;  CLI_MODEL_VAL=$2;  shift 2 ;;
         --interactive|-i)     INTERACTIVE=1; shift ;;
@@ -343,11 +351,13 @@ SETTING_INIT=1
 SETTING_CONTEXT_UPDATE=1
 SETTING_STEALTH=0
 SETTING_AUTO_MERGE=0
+SETTING_REVIEWER=${DEFAULT_REVIEWER:-owner}
 MODEL_EXPLICIT=0   # 1 once a model comes from persisted state or a CLI --model
 _val=$(state_get_setting "$REPO_SLUG" init);           [[ -n $_val ]] && SETTING_INIT=$_val
 _val=$(state_get_setting "$REPO_SLUG" context_update); [[ -n $_val ]] && SETTING_CONTEXT_UPDATE=$_val
 _val=$(state_get_setting "$REPO_SLUG" stealth);        [[ -n $_val ]] && SETTING_STEALTH=$_val
 _val=$(state_get_setting "$REPO_SLUG" auto_merge);     [[ -n $_val ]] && SETTING_AUTO_MERGE=$_val
+_val=$(state_get_setting "$REPO_SLUG" reviewer);       [[ -n $_val ]] && SETTING_REVIEWER=$_val
 _val=$(state_get_setting "$REPO_SLUG" base_branch);    [[ -n $_val ]] && BASE_BRANCH=$_val
 _val=$(state_get_setting "$REPO_SLUG" engine);         [[ -n $_val ]] && CODING_ENGINE=$_val
 _val=$(state_get_setting "$REPO_SLUG" model);          [[ -n $_val ]] && { CLAUDE_MODEL=$_val; MODEL_EXPLICIT=1; }
@@ -371,6 +381,14 @@ fi
 if (( CLI_AM_SET )); then
     SETTING_AUTO_MERGE=$CLI_AM_VAL
     state_set_setting "$REPO_SLUG" auto_merge "$CLI_AM_VAL"
+fi
+if (( CLI_REVIEWER_SET )); then
+    if [[ -z $CLI_REVIEWER_VAL ]]; then
+        log_error "--reviewer needs a value: owner | <github-login>"
+        exit 2
+    fi
+    SETTING_REVIEWER=$CLI_REVIEWER_VAL
+    state_set_setting "$REPO_SLUG" reviewer "$CLI_REVIEWER_VAL"
 fi
 if (( CLI_BASE_SET )); then
     state_set_setting "$REPO_SLUG" base_branch "$BASE_BRANCH"
@@ -417,7 +435,7 @@ if ! command -v "$CODING_ENGINE" >/dev/null 2>&1; then
     exit 2
 fi
 
-log_info "Options: engine=$CODING_ENGINE model=$CLAUDE_MODEL init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH auto_merge=$SETTING_AUTO_MERGE base=$BASE_BRANCH"
+log_info "Options: engine=$CODING_ENGINE model=$CLAUDE_MODEL init=$SETTING_INIT context_update=$SETTING_CONTEXT_UPDATE stealth=$SETTING_STEALTH auto_merge=$SETTING_AUTO_MERGE reviewer=$SETTING_REVIEWER base=$BASE_BRANCH"
 
 if (( INTERACTIVE )); then
     run_wizard
@@ -426,7 +444,7 @@ fi
 export REPO_OWNER REPO_NAME REPO_SLUG REPO_PATH BASE_BRANCH MAX_REVIEWS
 export DRY_RUN VERBOSE FORCE_RETRY LOCAL_MODE RESUME CODING_ENGINE CLAUDE_MODEL CLAUDE_RETRIES CLAUDE_BACKOFF_BASE
 export CLAUDE_MAX_BUDGET_USD PROMPTS_DIR
-export SETTING_INIT SETTING_CONTEXT_UPDATE SETTING_STEALTH SETTING_AUTO_MERGE AUTO_MERGE_STRATEGY INTERACTIVE
+export SETTING_INIT SETTING_CONTEXT_UPDATE SETTING_STEALTH SETTING_AUTO_MERGE AUTO_MERGE_STRATEGY SETTING_REVIEWER INTERACTIVE
 export AUTOCODING_GH_USER AUTOCODING_GIT_NAME AUTOCODING_GIT_EMAIL BOT_ACTIVE
 export AUTOCODING_REPOS_CTX_DIR CUSTOM_BRANCH_NAME
 # >>> autocode-parallel: exports

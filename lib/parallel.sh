@@ -297,6 +297,7 @@ parallel_launch() {
     )
     (( ${SETTING_STEALTH:-0} == 1 ))        && args+=(--stealth)         || args+=(--no-stealth)
     (( ${SETTING_AUTO_MERGE:-0} == 1 ))     && args+=(--auto-merge)      || args+=(--no-auto-merge)
+    [[ ${SETTING_REVIEWER:-none} == none ]] && args+=(--no-reviewer)     || args+=(--reviewer "$SETTING_REVIEWER")
     (( ${SETTING_INIT:-1} == 1 ))           && args+=(--init)            || args+=(--no-init)
     (( ${SETTING_CONTEXT_UPDATE:-1} == 1 )) && args+=(--context-update)  || args+=(--no-context-update)
     (( ${LOCAL_MODE:-0} == 1 ))             && args+=(--local)

@@ -195,6 +195,42 @@ gh_pr_merge_now() {
     fi
 }
 
+# Request a review on a PR that was not auto-merged. Args: PR_URL.
+# Reviewer from $SETTING_REVIEWER: "owner" (repo owner), "<login>", or "none".
+# Never fatal — the PR already exists; failures only log a warning.
+# Skips org owners (orgs can't review) and the PR author (GitHub rejects
+# self-review requests, e.g. when no bot identity is active).
+gh_pr_request_review() {
+    local pr_url=$1 who=${SETTING_REVIEWER:-none} login type me out
+    if [[ -z $who || $who == none ]]; then
+        log_info "Review request disabled."
+        return 0
+    fi
+    if [[ $who == owner ]]; then
+        if ! read -r login type < <(gh api "repos/${REPO_OWNER}/${REPO_NAME}" \
+                --jq '.owner.login + " " + .owner.type' 2>/dev/null) || [[ -z $login ]]; then
+            log_warn "Could not resolve repo owner — no review requested."
+            return 0
+        fi
+        if [[ $type == Organization ]]; then
+            log_warn "Repo owner '$login' is an org — use --reviewer <login> to request a review."
+            return 0
+        fi
+    else
+        login=${who#@}
+    fi
+    me=$(gh api user --jq .login 2>/dev/null)
+    if [[ -n $me && ${login,,} == "${me,,}" ]]; then
+        log_info "Reviewer @$login is the PR author — skipping review request."
+        return 0
+    fi
+    if ! out=$(_gh pr edit "$pr_url" --add-reviewer "$login" 2>&1); then
+        log_warn "Could not request review from @$login: $out"
+        return 0
+    fi
+    log_ok "Review requested from @$login."
+}
+
 gh_pr_create() {
     local title=$1 body_file=$2 out
     # Pass --head explicitly. Without this, gh looks up the current branch's
