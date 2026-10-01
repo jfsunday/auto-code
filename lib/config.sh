@@ -39,6 +39,11 @@ set -o pipefail
 : "${AUTOCODING_GIT_NAME:=}"
 : "${AUTOCODING_GIT_EMAIL:=}"
 
+# Reviewer requested on PRs that are not auto-merged (or whose merge failed).
+# "owner" = repo owner (skipped for orgs), "<login>" = that user, "none" = off.
+# Overridden per repo by --reviewer / --no-reviewer (persisted).
+: "${DEFAULT_REVIEWER:=owner}"
+
 # Load user overrides
 if [[ -r "$AUTOCODING_CONFIG_FILE" ]]; then
     # shellcheck disable=SC1090
